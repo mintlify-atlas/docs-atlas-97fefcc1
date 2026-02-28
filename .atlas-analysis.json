@@ -1,0 +1,132 @@
+{
+  "projectType": "general",
+  "projectName": "Aurora OS",
+  "projectDescription": "A reactive, agentic operating system with modern polish, featuring native C/Assembly/Rust kernel and browser runtime via WebAssembly/WASI",
+  "theme": "aspen",
+  "primaryColor": "#0066ff",
+  "lightColor": "#4791ff",
+  "darkColor": "#0052cc",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "features"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/kernel",
+              "architecture/bpe-engine",
+              "architecture/wasm-runtime",
+              "architecture/hybrid-design"
+            ]
+          },
+          {
+            "group": "User Guide",
+            "pages": [
+              "user-guide/desktop-interface",
+              "user-guide/applications",
+              "user-guide/keyboard-shortcuts",
+              "user-guide/user-accounts"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/setup",
+              "development/building",
+              "development/testing",
+              "development/contributing"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security/overview",
+              "security/threat-model",
+              "security/vulnerability-reporting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "System Calls",
+            "pages": [
+              "api/syscalls/overview",
+              "api/syscalls/process",
+              "api/syscalls/filesystem",
+              "api/syscalls/memory",
+              "api/syscalls/ipc",
+              "api/syscalls/network"
+            ]
+          },
+          {
+            "group": "Kernel API",
+            "pages": [
+              "api/kernel/scheduler",
+              "api/kernel/memory-management",
+              "api/kernel/vfs"
+            ]
+          },
+          {
+            "group": "Package Manager",
+            "pages": [
+              "api/package-manager/overview",
+              "api/package-manager/package-spec",
+              "api/package-manager/repository-spec"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Hybrid kernel with monolithic core and modular loadable services",
+    "Dual-target: native bare metal (x86_64, ARM) and browser WASM/WASI runtime",
+    "BPE/U (Browser Processing Engine/Unit) virtual CPU for browser execution",
+    "Agentic runtime with sandboxed AI agent execution",
+    "Modern desktop UI with macOS/Fluent hybrid aesthetics",
+    "Persistent authentication surviving browser cache clear (OPFS + WebCrypto)",
+    "Real boot sequence: BIOS POST → Bootloader → Kernel → Login",
+    "Complete userland: shell, coreutils, package manager",
+    "Built-in applications: Terminal, Files, Browser, Weather, Notes, Tasks, Music",
+    "GPU-accelerated animations at 60fps with Material Design interactions"
+  ],
+  "publicApiSurface": [
+    "SYS_EXIT",
+    "SYS_WRITE",
+    "SYS_READ",
+    "SYS_OPEN",
+    "SYS_CLOSE",
+    "SYS_FORK",
+    "SYS_EXECVE",
+    "SYS_WAITPID",
+    "SYS_MMAP",
+    "SYS_MUNMAP",
+    "SYS_MSGSND",
+    "SYS_MSGRCV",
+    "SYS_SHMGET",
+    "SYS_SHMAT",
+    "SYS_SHMDT",
+    "SYS_KILL",
+    "SYS_GETPID",
+    "BPE Core Engine",
+    "BPE Memory Manager",
+    "BPE Process Scheduler",
+    "BPE VFS",
+    "BPE Auth System",
+    "Package Manager API",
+    "Agent Runtime API"
+  ]
+}
