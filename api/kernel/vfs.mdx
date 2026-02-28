@@ -1,0 +1,595 @@
+---
+title: "Virtual File System API"
+description: "VFS abstraction layer with mount, resolve, and file operations for Aurora OS"
+---
+
+## Overview
+
+Aurora OS implements a **Unix-like Virtual File System (VFS)** that provides a unified interface for multiple filesystem types. The VFS supports mounting filesystems, path resolution, and standard file operations.
+
+<Info>
+VFS is mounted at boot with **tmpfs** for `/` and `/tmp`. ELF binaries are loaded through VFS.
+</Info>
+
+## Architecture
+
+Source: `kernel/src/fs/vfs.c`
+
+- **Mount Points**: Up to 8 simultaneous mounts
+- **Filesystem Types**: tmpfs, ext2 (stub), FAT (stub)
+- **Path Resolution**: Recursive component-by-component lookup
+- **Operations**: read, write, create, unlink, mkdir, readdir, stat
+
+---
+
+## Data Structures
+
+### vfs_node
+
+Represents a file, directory, or symlink in the VFS.
+
+<CodeGroup>
+```c struct vfs_node
+struct vfs_node {
+    char name[256];           // Filename (VFS_NAME_MAX + 1)
+    vfs_type_t type;          // VFS_FILE, VFS_DIR, VFS_SYMLINK
+    uint64_t size;            // File size in bytes
+    uint64_t inode;           // Filesystem-specific inode number
+    void *fs_priv;            // Filesystem private data
+    struct vfs_ops *ops;      // Function pointer table
+};
+```
+</CodeGroup>
+
+**Source**: `kernel/src/fs/vfs.h:27-34`
+
+---
+
+### vfs_type_t
+
+Node type enumeration.
+
+<ResponseField name="VFS_FILE" type="enum">
+Regular file.
+</ResponseField>
+
+<ResponseField name="VFS_DIR" type="enum">
+Directory.
+</ResponseField>
+
+<ResponseField name="VFS_SYMLINK" type="enum">
+Symbolic link (not yet implemented).
+</ResponseField>
+
+**Source**: `kernel/src/fs/vfs.h:17`
+
+---
+
+### vfs_ops
+
+Filesystem operation function pointers.
+
+<CodeGroup>
+```c struct vfs_ops
+struct vfs_ops {
+    int (*read)(struct vfs_node *node, uint64_t offset, 
+                void *buf, size_t count);
+    int (*write)(struct vfs_node *node, uint64_t offset, 
+                 const void *buf, size_t count);
+    int (*open)(struct vfs_node *node);
+    int (*close)(struct vfs_node *node);
+    struct vfs_node *(*readdir)(struct vfs_node *dir, uint32_t index);
+    struct vfs_node *(*lookup)(struct vfs_node *dir, const char *name);
+    int (*create)(struct vfs_node *dir, const char *name, vfs_type_t type);
+    int (*unlink)(struct vfs_node *dir, const char *name);
+    int (*mkdir)(struct vfs_node *dir, const char *name);
+    int (*stat)(struct vfs_node *node, struct vfs_stat *st);
+};
+```
+</CodeGroup>
+
+**Source**: `kernel/src/fs/vfs.h:36-47`
+
+---
+
+### vfs_stat
+
+File metadata (similar to POSIX `stat`).
+
+<CodeGroup>
+```c struct vfs_stat
+struct vfs_stat {
+    uint64_t inode;
+    uint64_t size;
+    vfs_type_t type;
+    uint32_t mode;      // Permission bits (e.g., 0755)
+    uint32_t nlink;     // Hard link count
+};
+```
+</CodeGroup>
+
+**Source**: `kernel/src/fs/vfs.h:19-25`
+
+---
+
+### vfs_mount
+
+Mount table entry.
+
+<CodeGroup>
+```c struct vfs_mount
+struct vfs_mount {
+    const char *mountpoint;     // Path (e.g., "/", "/tmp")
+    struct vfs_node *root;      // Root node of filesystem
+    const char *fs_type;        // Filesystem type ("tmpfs", "ext2")
+};
+```
+</CodeGroup>
+
+**Limit**: `VFS_MAX_MOUNTS = 8`
+
+**Source**: `kernel/src/fs/vfs.h:49-53`
+
+---
+
+## Core Functions
+
+### vfs_mount
+
+Mount a filesystem at a specified path.
+
+```c
+int vfs_mount(const char *mountpoint, struct vfs_node *root, 
+              const char *fs_type);
+```
+
+<ParamField body="mountpoint" type="const char*">
+Mount path (e.g., `/`, `/mnt/usb`).
+</ParamField>
+
+<ParamField body="root" type="struct vfs_node*">
+Root directory node of the filesystem.
+</ParamField>
+
+<ParamField body="fs_type" type="const char*">
+Filesystem type string ("tmpfs", "ext2", "fat32").
+</ParamField>
+
+<ResponseField name="return" type="int">
+Returns `0` on success, `-1` if mount table is full.
+</ResponseField>
+
+**Example**:
+
+<CodeGroup>
+```c Mounting tmpfs
+struct vfs_node *tmpfs_root = tmpfs_create_root();
+vfs_mount("/", tmpfs_root, "tmpfs");
+vfs_mount("/tmp", tmpfs_create_root(), "tmpfs");
+```
+</CodeGroup>
+
+**Source**: `kernel/src/fs/vfs.c:20-27`
+
+---
+
+### vfs_resolve
+
+Resolve an absolute path to a VFS node.
+
+```c
+struct vfs_node *vfs_resolve(const char *path);
+```
+
+<ParamField body="path" type="const char*">
+Absolute path (must start with `/`).
+</ParamField>
+
+<ResponseField name="return" type="struct vfs_node*">
+Pointer to resolved node, or `NULL` if path not found.
+</ResponseField>
+
+**Algorithm**:
+1. Find longest matching mount point
+2. Start at mount's root node
+3. Split remaining path into components (separated by `/`)
+4. Call `ops->lookup()` for each component
+5. Return final node or `NULL`
+
+**Example**:
+
+<CodeGroup>
+```c Path Resolution
+struct vfs_node *node = vfs_resolve("/home/user/file.txt");
+if (node && node->type == VFS_FILE) {
+    // File found
+}
+```
+</CodeGroup>
+
+**Source**: `kernel/src/fs/vfs.c:29-58`
+
+---
+
+### vfs_read
+
+Read data from a file.
+
+```c
+int vfs_read(struct vfs_node *node, uint64_t offset, 
+             void *buf, size_t count);
+```
+
+<ParamField body="node" type="struct vfs_node*">
+File node to read from.
+</ParamField>
+
+<ParamField body="offset" type="uint64_t">
+Byte offset in file.
+</ParamField>
+
+<ParamField body="buf" type="void*">
+Destination buffer.
+</ParamField>
+
+<ParamField body="count" type="size_t">
+Number of bytes to read.
+</ParamField>
+
+<ResponseField name="return" type="int">
+Number of bytes read, or `-1` on error.
+</ResponseField>
+
+**Behavior**:
+- Delegates to `node->ops->read()`
+- Returns `-1` if node is `NULL` or read operation not supported
+
+**Source**: `kernel/src/fs/vfs.c:60-64`
+
+---
+
+### vfs_write
+
+Write data to a file.
+
+```c
+int vfs_write(struct vfs_node *node, uint64_t offset, 
+              const void *buf, size_t count);
+```
+
+<ParamField body="node" type="struct vfs_node*">
+File node to write to.
+</ParamField>
+
+<ParamField body="offset" type="uint64_t">
+Byte offset in file.
+</ParamField>
+
+<ParamField body="buf" type="const void*">
+Source buffer.
+</ParamField>
+
+<ParamField body="count" type="size_t">
+Number of bytes to write.
+</ParamField>
+
+<ResponseField name="return" type="int">
+Number of bytes written, or `-1` on error.
+</ResponseField>
+
+**Source**: `kernel/src/fs/vfs.c:66-70`
+
+---
+
+### vfs_create
+
+Create a new file or directory entry.
+
+```c
+int vfs_create(struct vfs_node *dir, const char *name, vfs_type_t type);
+```
+
+<ParamField body="dir" type="struct vfs_node*">
+Parent directory.
+</ParamField>
+
+<ParamField body="name" type="const char*">
+Filename (no path separators).
+</ParamField>
+
+<ParamField body="type" type="vfs_type_t">
+`VFS_FILE` or `VFS_DIR`.
+</ParamField>
+
+<ResponseField name="return" type="int">
+Returns `0` on success, `-1` on error.
+</ResponseField>
+
+**Source**: `kernel/src/fs/vfs.c:72-76`
+
+---
+
+### vfs_unlink
+
+Delete a file.
+
+```c
+int vfs_unlink(struct vfs_node *dir, const char *name);
+```
+
+<ParamField body="dir" type="struct vfs_node*">
+Parent directory.
+</ParamField>
+
+<ParamField body="name" type="const char*">
+Filename to delete.
+</ParamField>
+
+<ResponseField name="return" type="int">
+Returns `0` on success, `-1` on error.
+</ResponseField>
+
+**Source**: `kernel/src/fs/vfs.c:78-82`
+
+---
+
+### vfs_mkdir
+
+Create a directory.
+
+```c
+int vfs_mkdir(struct vfs_node *dir, const char *name);
+```
+
+<ParamField body="dir" type="struct vfs_node*">
+Parent directory.
+</ParamField>
+
+<ParamField body="name" type="const char*">
+Directory name.
+</ParamField>
+
+<ResponseField name="return" type="int">
+Returns `0` on success, `-1` on error.
+</ResponseField>
+
+**Source**: `kernel/src/fs/vfs.c:84-88`
+
+---
+
+### vfs_stat
+
+Get file metadata.
+
+```c
+int vfs_stat(struct vfs_node *node, struct vfs_stat *st);
+```
+
+<ParamField body="node" type="struct vfs_node*">
+File or directory node.
+</ParamField>
+
+<ParamField body="st" type="struct vfs_stat*">
+Pointer to stat structure to fill.
+</ParamField>
+
+<ResponseField name="return" type="int">
+Returns `0` on success, `-1` on error.
+</ResponseField>
+
+**Behavior**:
+1. Calls `node->ops->stat()` if available
+2. Falls back to filling stat from `vfs_node` fields:
+   - `inode`, `size`, `type` from node
+   - `mode = 0755` (default)
+   - `nlink = 1` (default)
+
+**Source**: `kernel/src/fs/vfs.c:90-102`
+
+---
+
+### vfs_readdir
+
+Read directory entry by index.
+
+```c
+struct vfs_node *vfs_readdir(struct vfs_node *dir, uint32_t index);
+```
+
+<ParamField body="dir" type="struct vfs_node*">
+Directory node.
+</ParamField>
+
+<ParamField body="index" type="uint32_t">
+Entry index (0-based).
+</ParamField>
+
+<ResponseField name="return" type="struct vfs_node*">
+Pointer to entry node, or `NULL` if index out of bounds.
+</ResponseField>
+
+**Usage Example**:
+
+<CodeGroup>
+```c Listing Directory
+struct vfs_node *dir = vfs_resolve("/home");
+for (uint32_t i = 0; ; i++) {
+    struct vfs_node *entry = vfs_readdir(dir, i);
+    if (!entry) break;
+    printf("%s\n", entry->name);
+}
+```
+</CodeGroup>
+
+**Source**: `kernel/src/fs/vfs.c:104-108`
+
+---
+
+## Filesystem Implementations
+
+### tmpfs (In-Memory Filesystem)
+
+Fully functional RAM-based filesystem.
+
+**Features**:
+- Mounted at `/` and `/tmp` by default
+- Supports files and directories
+- All operations implemented (create, unlink, mkdir, read, write)
+- Data stored in kernel heap via `kmalloc()`
+
+**Source**: `kernel/src/fs/tmpfs/`
+
+---
+
+### ext2 (Extended Filesystem 2)
+
+<Note>
+**Status**: Stub implementation. Not functional yet.
+</Note>
+
+**Planned Features**:
+- Read-only access to ext2 partitions
+- Inode-based structure
+- Block group descriptors
+
+**Source**: `kernel/src/fs/ext2/`
+
+---
+
+### FAT32 (File Allocation Table)
+
+<Note>
+**Status**: Stub implementation. Not functional yet.
+</Note>
+
+**Planned Features**:
+- Read/write access to FAT32 partitions
+- Long filename support (VFAT)
+- Boot sector parsing
+
+**Source**: `kernel/src/fs/fat/`
+
+---
+
+## File Descriptor Integration
+
+Processes use file descriptors to interact with VFS. Each process has an FD table.
+
+<CodeGroup>
+```c File Descriptor Entry
+struct fd_entry {
+    void *vfs_node;       // struct vfs_node *
+    void *fs_priv;        // Pipe or socket data
+    uint64_t offset;      // Current file position
+    int flags;            // O_RDONLY, O_WRONLY, O_RDWR
+    int in_use;           // FD slot allocated
+};
+```
+</CodeGroup>
+
+**Limits**:
+- `FD_MAX = 32` file descriptors per process
+- FD 0 = stdin, 1 = stdout, 2 = stderr (reserved)
+
+**Source**: `kernel/src/proc/process.h:36-43`
+
+---
+
+## Syscall Interface
+
+VFS operations are exposed through syscalls:
+
+<CardGroup cols={2}>
+  <Card title="SYS_OPEN" icon="folder-open">
+    Open file and return FD
+  </Card>
+  <Card title="SYS_READ" icon="book-open">
+    Read from FD
+  </Card>
+  <Card title="SYS_WRITE" icon="pen">
+    Write to FD
+  </Card>
+  <Card title="SYS_CLOSE" icon="xmark">
+    Close FD
+  </Card>
+  <Card title="SYS_STAT" icon="info">
+    Get file metadata
+  </Card>
+  <Card title="SYS_MKDIR" icon="folder-plus">
+    Create directory
+  </Card>
+  <Card title="SYS_UNLINK" icon="trash">
+    Delete file
+  </Card>
+  <Card title="SYS_READDIR" icon="list">
+    Read directory entries
+  </Card>
+</CardGroup>
+
+**Implementation**: `kernel/src/proc/syscall.c`
+
+---
+
+## Path Resolution Examples
+
+<CodeGroup>
+```text Mount Table
+/       → tmpfs (root)
+/tmp    → tmpfs (separate instance)
+/mnt/usb → (not mounted)
+```
+</CodeGroup>
+
+**Resolution Process**:
+
+1. **Path**: `/etc/passwd`
+   - Matches mount: `/`
+   - Lookup: `etc` in root → `passwd` in `etc`
+
+2. **Path**: `/tmp/session.dat`
+   - Matches mount: `/tmp` (longest match wins)
+   - Lookup: `session.dat` in tmpfs root
+
+3. **Path**: `/mnt/usb/data`
+   - No matching mount → returns `NULL`
+
+---
+
+## Performance Considerations
+
+<Info>
+**Path Resolution**: O(n×m) where n = path depth, m = directory entries
+
+**tmpfs**: All operations O(1) or O(n) linear scan (no hash tables yet)
+
+**Mount Lookup**: O(m) where m = number of mounts (max 8)
+</Info>
+
+---
+
+## Limitations
+
+<Warning>
+- No symbolic link support yet (`VFS_SYMLINK` defined but not implemented)
+- No hard links (nlink always 1)
+- No permissions checking (mode bits stored but not enforced)
+- No timestamps (created, modified, accessed)
+- No ownership (uid/gid)
+- No extended attributes
+</Warning>
+
+---
+
+## Related APIs
+
+- [Process Management](/api/kernel/process) - File descriptor table per process
+- [Syscalls](/api/kernel/syscalls) - open, read, write, close, stat, etc.
+- [ELF Loader](/api/kernel/elf) - Loads executables via VFS
+
+---
+
+## References
+
+- [OSDev Wiki - VFS](https://wiki.osdev.org/VFS)
+- [Linux VFS Documentation](https://www.kernel.org/doc/html/latest/filesystems/vfs.html)
+- Source: `kernel/src/fs/vfs.c`, `kernel/src/fs/vfs.h`

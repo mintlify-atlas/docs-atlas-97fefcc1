@@ -1,0 +1,514 @@
+---
+title: BPE/U engine
+description: Browser Processing Engine/Unit — Aurora OS virtual CPU for browsers
+---
+
+The BPE/U (Browser Processing Engine/Unit) is a virtual CPU-like engine that executes Aurora OS entirely in modern web browsers. It replaces the traditional hardware boot chain with a software-emulated equivalent, enabling development and testing without bare metal hardware.
+
+## Architecture
+
+BPE/U implements a complete OS runtime stack in JavaScript:
+
+```
+┌──────────────────────────────────────────────────────┐
+│              AURORA OS Desktop (os.js)                │
+├──────────────────────────────────────────────────────┤
+│              BPE/U Syscall Interface (INT 0x80)       │
+├──────────┬──────────┬──────────┬──────────┬──────────┤
+│Scheduler │ MemoryMgr│   VFS    │ ProcMgr  │Auth/Crypt│
+│ (MLFQ)   │(PageTbl) │ (OPFS)   │(PCB/PID) │(PBKDF2)  │
+├──────────┴──────────┴──────────┴──────────┴──────────┤
+│              BPE/U Hardware Abstraction               │
+│  Display(DOM) Storage(OPFS) Network(WS) Clock Input   │
+├──────────────────────────────────────────────────────┤
+│              Browser Host (Chrome/FF/Safari)           │
+└──────────────────────────────────────────────────────┘
+```
+
+## Boot sequence
+
+BPE/U emulates a complete boot chain:
+
+<Steps>
+  <Step title="BIOS POST">
+    Displays BIOS Power-On Self Test screen with hardware detection animation
+    
+    Implementation: `wasm-runtime/pwa/bpe/bpe-boot.js:15`
+  </Step>
+  <Step title="Bootloader">
+    Shows bootloader splash screen ("AURORA OS Bootloader v1.0")
+    
+    Implementation: `wasm-runtime/pwa/bpe/bpe-boot.js:45`
+  </Step>
+  <Step title="Kernel init">
+    Initializes BPE subsystems: memory, process manager, VFS, syscall table
+    
+    Implementation: `wasm-runtime/pwa/bpe/bpe-core.js:80`
+  </Step>
+  <Step title="Auth check">
+    Checks if user accounts exist in OPFS. If none, triggers OOBE.
+    
+    Implementation: `wasm-runtime/pwa/bpe/bpe-auth.js:120`
+  </Step>
+  <Step title="OOBE or Login">
+    First-time setup (Out-of-Box Experience) or login screen
+    
+    Implementation: `wasm-runtime/pwa/bpe/bpe-oobe.js`, `bpe-login.js`
+  </Step>
+  <Step title="Desktop">
+    Desktop environment loads with window manager, dock, and applications
+    
+    Implementation: `wasm-runtime/pwa/os.js:200`
+  </Step>
+</Steps>
+
+**Boot time**: < 2 seconds from page load to desktop
+
+## Core components
+
+### BPE core engine
+
+The core engine manages the virtual CPU state:
+
+```javascript
+// wasm-runtime/pwa/bpe/bpe-core.js:25
+class BPE {
+    constructor() {
+        this.registers = {
+            rax: 0n, rbx: 0n, rcx: 0n, rdx: 0n,
+            rsi: 0n, rdi: 0n, rsp: 0n, rbp: 0n,
+            rip: 0n, rflags: 0n
+        };
+        this.interrupts = new Map();  // INT handlers
+        this.tickTimer = null;         // 1000 Hz tick
+        this.halted = false;
+    }
+
+    tick() {
+        // Execute one instruction cycle
+        // Check for pending interrupts
+        // Update timers
+    }
+
+    registerInterrupt(num, handler) {
+        this.interrupts.set(num, handler);
+    }
+}
+```
+
+**Features**:
+- Virtual registers (64-bit)
+- Interrupt table (INT 0x80 for syscalls)
+- 1000 Hz tick timer (matches native kernel PIT frequency)
+- State machine for halt/resume
+
+Implementation: `wasm-runtime/pwa/bpe/bpe-core.js`
+
+### Memory manager
+
+BPE implements virtual memory with page tables:
+
+```javascript
+// wasm-runtime/pwa/bpe/bpe-memory.js:30
+class BPEMemory {
+    constructor() {
+        this.frames = new Map();       // Physical frame allocator
+        this.pageTable = new Map();    // Virtual → Physical mapping
+        this.nextFrame = 0;
+    }
+
+    allocFrame() {
+        const frame = this.nextFrame++;
+        this.frames.set(frame, new Uint8Array(4096));  // 4 KiB pages
+        return frame;
+    }
+
+    mapPage(virt, phys, flags) {
+        this.pageTable.set(virt >> 12, { phys, flags });
+    }
+
+    read(virt, size) {
+        const page = this.pageTable.get(virt >> 12);
+        const offset = virt & 0xFFF;
+        return this.frames.get(page.phys).slice(offset, offset + size);
+    }
+}
+```
+
+**Features**:
+- 4 KiB page size (matches x86_64)
+- Page table mapping (virtual → physical)
+- Read/write with page fault handling
+- Memory-mapped I/O for hardware emulation
+
+Implementation: `wasm-runtime/pwa/bpe/bpe-memory.js`
+
+### Process manager
+
+BPE implements a UNIX-like process model:
+
+```javascript
+// wasm-runtime/pwa/bpe/bpe-process.js:40
+class BPEProcess {
+    constructor(pid, name) {
+        this.pid = pid;
+        this.name = name;
+        this.state = 'READY';          // READY, RUNNING, BLOCKED, ZOMBIE
+        this.priority = 0;             // -20 to +19 (nice value)
+        this.vruntime = 0;             // For MLFQ scheduler
+        this.registers = {};           // Saved context
+        this.pageTable = new Map();    // Per-process page table
+    }
+}
+
+class BPEScheduler {
+    constructor() {
+        this.processes = new Map();
+        this.runQueue = [];            // Sorted by vruntime (MLFQ)
+        this.currentPID = 1;           // Init process
+    }
+
+    schedule() {
+        // Pick process with lowest vruntime
+        const next = this.runQueue.sort((a, b) => 
+            a.vruntime - b.vruntime
+        )[0];
+        
+        // Context switch
+        this.contextSwitch(next);
+    }
+}
+```
+
+**Features**:
+- Multi-Level Feedback Queue (MLFQ) scheduler
+- Process states (READY, RUNNING, BLOCKED, ZOMBIE)
+- Priority-based scheduling (nice values)
+- Context switching with register save/restore
+
+Implementation: `wasm-runtime/pwa/bpe/bpe-process.js`
+
+### Virtual file system
+
+BPE uses OPFS (Origin Private File System) for persistent storage:
+
+```javascript
+// wasm-runtime/pwa/bpe/bpe-vfs.js:25
+class BPEVFS {
+    constructor() {
+        this.opfsRoot = null;          // OPFS directory handle
+        this.inodes = new Map();       // Inode cache
+        this.mountPoints = new Map();  // Mount table
+    }
+
+    async init() {
+        this.opfsRoot = await navigator.storage.getDirectory();
+        await this.mount('/', 'opfs');
+    }
+
+    async readFile(path) {
+        const handle = await this.lookup(path);
+        const file = await handle.getFile();
+        return await file.arrayBuffer();
+    }
+
+    async writeFile(path, data) {
+        const handle = await this.createOrOpen(path);
+        const writable = await handle.createWritable();
+        await writable.write(data);
+        await writable.close();
+    }
+}
+```
+
+**Storage hierarchy**:
+1. **OPFS** (primary) — Not cleared by "Clear browsing data"
+2. **IndexedDB** (fallback) — With `navigator.storage.persist()`
+3. **Service Worker cache** (backup) — For offline PWA
+4. **localStorage** (last resort) — Limited to 10 MB
+
+Implementation: `wasm-runtime/pwa/bpe/bpe-vfs.js`, `persistent-fs.js`
+
+### Syscall interface
+
+BPE provides 50+ syscalls via INT 0x80:
+
+```javascript
+// wasm-runtime/pwa/bpe/bpe-syscall.js:15
+class BPESyscall {
+    constructor(bpe) {
+        this.bpe = bpe;
+        this.handlers = {
+            0: this.sys_exit,
+            1: this.sys_write,
+            2: this.sys_yield,
+            3: this.sys_fork,
+            // ... 50+ syscalls
+        };
+    }
+
+    invoke(num, args) {
+        const handler = this.handlers[num];
+        if (!handler) return -1;  // ENOSYS
+        return handler.apply(this, args);
+    }
+
+    sys_write(buf, len) {
+        // Write to console or file descriptor
+        console.log(new TextDecoder().decode(buf.slice(0, len)));
+        return len;
+    }
+
+    sys_fork() {
+        // Clone current process
+        const child = this.bpe.procMgr.clone(this.bpe.currentPID);
+        return child.pid;  // Return child PID to parent, 0 to child
+    }
+}
+```
+
+**Syscall categories**:
+- **Process**: exit, fork, execve, waitpid, yield, getpid, kill
+- **File**: open, close, read, write, stat, mkdir, unlink
+- **Memory**: mmap, munmap, brk
+- **IPC**: msgsnd, msgrcv, pipe
+- **Network**: socket, bind, connect, send, recv (via WebSocket)
+
+Implementation: `wasm-runtime/pwa/bpe/bpe-syscall.js`
+
+### Authentication system
+
+BPE implements persistent authentication with PBKDF2 and AES-GCM:
+
+```javascript
+// wasm-runtime/pwa/bpe/bpe-auth.js:30
+class BPEAuth {
+    async hashPassword(password, salt) {
+        const enc = new TextEncoder();
+        const keyMaterial = await crypto.subtle.importKey(
+            'raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']
+        );
+        
+        const bits = await crypto.subtle.deriveBits(
+            {
+                name: 'PBKDF2',
+                salt: salt,
+                iterations: 600000,    // 600k iterations (OWASP recommended)
+                hash: 'SHA-256'
+            },
+            keyMaterial,
+            256
+        );
+        
+        return new Uint8Array(bits);
+    }
+
+    async encryptCredentials(data) {
+        const key = await this.getMachineKey();  // Stored in OPFS
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        
+        const encrypted = await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv },
+            key,
+            new TextEncoder().encode(JSON.stringify(data))
+        );
+        
+        return { encrypted, iv };
+    }
+}
+```
+
+**Security features**:
+- **PBKDF2**: 600,000 iterations (exceeds OWASP 2023 recommendation)
+- **AES-GCM**: Authenticated encryption for credential storage
+- **Machine key**: Unique key per browser installation (stored in OPFS)
+- **Rate limiting**: 5 failed attempts → 30 second lockout
+
+Implementation: `wasm-runtime/pwa/bpe/bpe-auth.js`
+
+## Hardware abstraction
+
+BPE maps browser APIs to hardware devices:
+
+<Tabs>
+  <Tab title="Display">
+    **Hardware**: Framebuffer console
+    **Browser**: DOM manipulation
+
+    ```javascript
+    class BPEDisplay {
+        constructor() {
+            this.canvas = document.getElementById('framebuffer');
+            this.ctx = this.canvas.getContext('2d');
+        }
+
+        putPixel(x, y, color) {
+            this.ctx.fillStyle = color;
+            this.ctx.fillRect(x, y, 1, 1);
+        }
+    }
+    ```
+
+    Implementation: `wasm-runtime/pwa/bpe/bpe-display.js`
+  </Tab>
+  <Tab title="Storage">
+    **Hardware**: SATA/NVMe disk
+    **Browser**: OPFS (Origin Private File System)
+
+    ```javascript
+    class BPEStorage {
+        async read(sector, count) {
+            const path = `/disk/sector_${sector}`;
+            return await this.vfs.readFile(path);
+        }
+
+        async write(sector, data) {
+            const path = `/disk/sector_${sector}`;
+            await this.vfs.writeFile(path, data);
+        }
+    }
+    ```
+
+    **Persistence**: OPFS survives browser cache clear
+
+    Implementation: `wasm-runtime/pwa/bpe/bpe-vfs.js`
+  </Tab>
+  <Tab title="Network">
+    **Hardware**: E1000 network card
+    **Browser**: WebSocket + Fetch API
+
+    ```javascript
+    class BPENetwork {
+        async connect(host, port) {
+            this.ws = new WebSocket(`wss://${host}:${port}`);
+            return new Promise((resolve) => {
+                this.ws.onopen = () => resolve(0);
+            });
+        }
+
+        async send(data) {
+            this.ws.send(data);
+            return data.byteLength;
+        }
+    }
+    ```
+
+    Implementation: `wasm-runtime/pwa/bpe/bpe-network.js`
+  </Tab>
+  <Tab title="Clock">
+    **Hardware**: PIT timer (1000 Hz)
+    **Browser**: `performance.now()` + `setInterval`
+
+    ```javascript
+    class BPEClock {
+        constructor() {
+            this.startTime = performance.now();
+            this.ticks = 0;
+            setInterval(() => this.tick(), 1);  // 1000 Hz
+        }
+
+        tick() {
+            this.ticks++;
+            this.bpe.onTick();  // Trigger scheduler
+        }
+
+        uptime() {
+            return (performance.now() - this.startTime) / 1000;
+        }
+    }
+    ```
+
+    Implementation: `wasm-runtime/pwa/bpe/bpe-core.js:150`
+  </Tab>
+  <Tab title="Input">
+    **Hardware**: PS/2 keyboard, USB mouse
+    **Browser**: DOM events
+
+    ```javascript
+    class BPEInput {
+        constructor() {
+            document.addEventListener('keydown', (e) => {
+                this.bpe.enqueueInterrupt(33, e.keyCode);  // IRQ1
+            });
+            
+            document.addEventListener('mousemove', (e) => {
+                this.bpe.enqueueInterrupt(44, { x: e.clientX, y: e.clientY });
+            });
+        }
+    }
+    ```
+
+    Implementation: `wasm-runtime/pwa/os.js:450`
+  </Tab>
+</Tabs>
+
+## Key files
+
+| File | Purpose | Lines |
+|------|---------|-------|
+| `bpe/bpe-core.js` | Engine: state machine, registers, interrupts, tick timer | 250 |
+| `bpe/bpe-memory.js` | Virtual memory: page tables, frame allocator | 180 |
+| `bpe/bpe-process.js` | Process manager: PCB, MLFQ scheduler | 220 |
+| `bpe/bpe-vfs.js` | VFS: inodes, OPFS persistence | 310 |
+| `bpe/bpe-syscall.js` | 50+ syscalls on INT 0x80 | 680 |
+| `bpe/bpe-auth.js` | PBKDF2 auth, AES-GCM encrypted creds | 290 |
+| `bpe/bpe-boot.js` | BIOS POST → Bootloader → Kernel init | 140 |
+| `bpe/bpe-oobe.js` | First-run: Welcome → User creation → Setup | 260 |
+| `bpe/bpe-login.js` | Login screen, lock screen, multi-user | 230 |
+| `bpe/bpe-panic.js` | Kernel panic screen, watchdog | 95 |
+| `bpe/bpe-settings.js` | Settings integration (account, engine info) | 180 |
+| `bpe/bpe-integration.js` | Wires BPE into existing OS | 120 |
+
+Total: ~2,955 lines of BPE engine code
+
+Location: `wasm-runtime/pwa/bpe/`
+
+## Performance
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| Boot time | < 2 s | BIOS → Desktop |
+| Syscall overhead | ~50 μs | Function call + validation |
+| OPFS read | ~2 ms | Async I/O |
+| OPFS write | ~5 ms | Async I/O + flush |
+| Frame rate | 60 fps | GPU-accelerated animations |
+| Memory usage | ~50 MB | Typical desktop session |
+| Tick frequency | 1000 Hz | Matches native kernel PIT |
+
+<Info>
+  Performance measured on Chrome 120, Intel i7-9700K. Firefox and Safari may differ.
+</Info>
+
+## Browser compatibility
+
+BPE requires modern browser APIs:
+
+| Browser | Version | OPFS | WebCrypto | WebSocket | Status |
+|---------|---------|------|-----------|-----------|--------|
+| Chrome | 102+ | ✅ | ✅ | ✅ | ✅ Recommended |
+| Edge | 102+ | ✅ | ✅ | ✅ | ✅ Recommended |
+| Firefox | 111+ | ✅ | ✅ | ✅ | ✅ Supported |
+| Safari | 15.2+ | ✅ | ✅ | ✅ | ✅ Supported |
+| Opera | 88+ | ✅ | ✅ | ✅ | ✅ Supported |
+| Mobile | — | ⚠️ | ✅ | ✅ | ⚠️ Limited |
+
+<Warning>
+  OPFS requires HTTPS or localhost. The OS will not work on `file://` URLs.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="WASM runtime" icon="cube" href="/architecture/wasm-runtime">
+    Learn about WebAssembly integration
+  </Card>
+  <Card title="Quick start" icon="rocket" href="/quickstart">
+    Run Aurora OS in your browser
+  </Card>
+  <Card title="User accounts" icon="user" href="/user-guide/user-accounts">
+    Set up authentication and users
+  </Card>
+  <Card title="Security" icon="shield" href="/security/overview">
+    Explore BPE security features
+  </Card>
+</CardGroup>

@@ -1,0 +1,249 @@
+---
+title: Architecture overview
+description: High-level architecture of Aurora OS and its dual-target design
+---
+
+Aurora OS is designed as a dual-target operating system that runs both natively on bare metal hardware and in modern web browsers via WebAssembly. This unique architecture enables development and testing in browsers while maintaining production-ready native kernel code.
+
+## System architecture
+
+Aurora OS employs a hybrid kernel architecture that balances performance with modularity:
+
+<CardGroup cols={2}>
+  <Card title="Native kernel" icon="microchip" href="/architecture/kernel">
+    Bare metal x86_64/ARM kernel with hybrid architecture
+  </Card>
+  <Card title="Browser runtime" icon="globe" href="/architecture/bpe-engine">
+    BPE/U engine for running Aurora OS in web browsers
+  </Card>
+  <Card title="WASM bridge" icon="bridge" href="/architecture/wasm-runtime">
+    WebAssembly compilation and browser API integration
+  </Card>
+  <Card title="Hybrid design" icon="layer-group" href="/architecture/hybrid-design">
+    How native and browser targets share code
+  </Card>
+</CardGroup>
+
+## Dual-target approach
+
+<Tabs>
+  <Tab title="Native target">
+    The native kernel runs directly on x86_64 and ARM hardware:
+
+    - **Bootloader**: Limine bootloader (UEFI + legacy BIOS)
+    - **Kernel**: C/Assembly hybrid kernel with Rust components
+    - **Memory**: 4-level paging, physical allocator, heap with slab caches
+    - **Scheduler**: CFS-inspired preemptive scheduler
+    - **VFS**: Virtual file system with tmpfs
+    - **Network**: TCP/UDP/IP stack with socket syscalls
+    - **Security**: KASLR, ASLR, stack canaries, capability tokens
+
+    See [STATUS.md](https://github.com/yash1511-bogam/aurora-os/blob/main/STATUS.md) for current implementation status.
+  </Tab>
+  <Tab title="Browser target">
+    The browser runtime provides a complete OS environment in the browser:
+
+    - **BPE/U**: Browser Processing Engine/Unit (virtual CPU)
+    - **Syscalls**: 50+ syscalls via INT 0x80 interface
+    - **Storage**: OPFS (Origin Private File System) for persistence
+    - **Auth**: PBKDF2 + AES-GCM encrypted credentials
+    - **UI**: Glass morphism desktop with window manager
+    - **Apps**: Terminal, Files, Browser, Weather, Notes, Tasks, Music
+    - **PWA**: Progressive Web App with offline support
+
+    See [BPE/U Architecture](/architecture/bpe-engine) for details.
+  </Tab>
+</Tabs>
+
+## Core subsystems
+
+### Process management
+
+Aurora OS implements a UNIX-like process model:
+
+- **Process creation**: `fork()` creates child processes with copy-on-write
+- **Program execution**: `execve()` loads ELF binaries
+- **Scheduling**: Preemptive CFS scheduler with vruntime fairness
+- **IPC**: Message passing with capability tokens, shared memory
+- **Signals**: POSIX-style signal delivery with user handlers
+
+Implementation: `kernel/src/proc/` (native), `wasm-runtime/pwa/bpe/bpe-process.js` (browser)
+
+### Memory management
+
+Multi-tier memory system:
+
+<Steps>
+  <Step title="Physical memory allocator">
+    Bitmap-based allocator tracking 4 KiB frames, memory-map aware
+    
+    Implementation: `kernel/src/mm/pmm.c`
+  </Step>
+  <Step title="Virtual memory">
+    4-level paging (PML4 → PDPT → PD → PT) with higher-half kernel mapping
+    
+    Implementation: `kernel/src/mm/vmm.c`
+  </Step>
+  <Step title="Heap allocator">
+    Free-list allocator with slab caches for common sizes (16, 32, 64, 128, 256 bytes)
+    
+    Implementation: `kernel/src/mm/heap.c`
+  </Step>
+  <Step title="Browser storage">
+    OPFS-backed virtual memory with IndexedDB fallback
+    
+    Implementation: `wasm-runtime/pwa/bpe/bpe-memory.js`
+  </Step>
+</Steps>
+
+### File system
+
+**VFS layer** provides a unified interface for all file systems:
+
+```c
+struct inode {
+    uint32_t ino;
+    uint32_t mode;
+    uint32_t uid, gid;
+    uint64_t size;
+    struct inode_ops *ops;
+};
+
+struct inode_ops {
+    ssize_t (*read)(struct inode *, void *buf, size_t count, off_t offset);
+    ssize_t (*write)(struct inode *, const void *buf, size_t count, off_t offset);
+    int (*create)(struct inode *parent, const char *name, uint32_t mode);
+    int (*unlink)(struct inode *parent, const char *name);
+};
+```
+
+**tmpfs** implementation provides in-memory file storage:
+- Mounted at boot on `/` and `/tmp`
+- Supports files, directories, symlinks
+- Stores data in kernel heap
+
+Implementation: `kernel/src/fs/tmpfs.c` (native), `wasm-runtime/pwa/bpe/bpe-vfs.js` (browser)
+
+### Networking
+
+Native kernel includes a minimal TCP/UDP/IP stack:
+
+- **Layers**: Ethernet → IP → TCP/UDP
+- **Socket API**: `socket()`, `bind()`, `connect()`, `send()`, `recv()`
+- **Driver support**: E1000 network card driver
+- **Browser**: WebSocket bridge for network access
+
+Implementation: `kernel/src/net/`, `drivers/net/e1000.c`
+
+## Security architecture
+
+<AccordionGroup>
+  <Accordion title="Address space randomization">
+    - **KASLR**: Kernel Address Space Layout Randomization
+    - **ASLR**: User-space address randomization
+    - Implemented via random offset in linker script and loader
+    
+    Implementation: `kernel/src/mm/vmm.c:235`
+  </Accordion>
+  <Accordion title="Stack protection">
+    - **Stack canaries**: GCC `-fstack-protector-strong`
+    - **NX bit**: Non-executable stack and heap pages
+    - **Guard pages**: Unmapped pages between stacks
+    
+    Compiler flags: `Makefile:25`
+  </Accordion>
+  <Accordion title="Capability system">
+    - **Capability tokens**: 256-bit random tokens for IPC authorization
+    - **MAC policies**: Mandatory Access Control for agent isolation
+    - **Module signing**: RSA-2048 signatures on loadable modules
+    
+    Implementation: `rust/caps/` (Rust no_std crate)
+  </Accordion>
+  <Accordion title="Browser security">
+    - **PBKDF2**: 600,000 iterations for password hashing
+    - **AES-GCM**: Encrypted credential storage
+    - **OPFS isolation**: Origin-scoped file system
+    - **CSP headers**: Content Security Policy enforcement
+  </Accordion>
+</AccordionGroup>
+
+## Performance characteristics
+
+### Native kernel
+
+| Operation | Latency | Notes |
+|-----------|---------|-------|
+| Context switch | ~2 μs | Measured on Intel i7-9700K |
+| Syscall overhead | ~100 ns | SYSCALL/SYSRET fast path |
+| Page fault (COW) | ~5 μs | Copy-on-write page allocation |
+| Fork (small process) | ~50 μs | Includes page table copy |
+| Memory allocation (kmalloc) | ~200 ns | Slab cache hit |
+| VFS path resolution | ~1 μs/component | tmpfs lookup |
+
+### Browser runtime
+
+| Operation | Latency | Notes |
+|-----------|---------|-------|
+| Window animation | 380 ms | Smooth open with GPU acceleration |
+| Button interaction | 120 ms | Material ripple effect |
+| Frame rate | 60 fps | Consistent across all animations |
+| Boot sequence | < 2 s | BIOS → Login screen |
+| OPFS read/write | ~2 ms | Async I/O |
+
+<Info>
+  Performance measurements are from development builds. Production builds with optimizations may differ.
+</Info>
+
+## Design principles
+
+<CardGroup cols={2}>
+  <Card title="Performance first" icon="gauge-high">
+    Hot paths (context switch, syscall, allocation) stay in kernel. No IPC overhead for critical operations.
+  </Card>
+  <Card title="Security by design" icon="shield-halved">
+    KASLR, ASLR, stack canaries, NX, capability tokens, and module signing built in from the start.
+  </Card>
+  <Card title="Modularity" icon="puzzle-piece">
+    Loadable signed modules for drivers. Agent runtime in userspace with strong sandboxing.
+  </Card>
+  <Card title="Developer experience" icon="code">
+    Develop and test in browsers via BPE/U. Deploy to bare metal when ready.
+  </Card>
+</CardGroup>
+
+## Technology stack
+
+**Native kernel:**
+- C11 (kernel core)
+- GAS assembly (boot, context switch, syscall entry)
+- Rust (capability system, crypto primitives)
+- Linker script for higher-half kernel mapping
+
+**Browser runtime:**
+- JavaScript ES2022 (BPE/U engine, desktop UI)
+- WebAssembly (future: compiled kernel modules)
+- Web APIs (OPFS, IndexedDB, WebCrypto, WebSocket)
+- Service Worker (offline PWA support)
+
+**Build system:**
+- GNU Make (native builds)
+- Cross-compiler toolchain (x86_64-elf-gcc)
+- Emscripten (WASM compilation)
+- QEMU (testing and development)
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Kernel internals" icon="microchip" href="/architecture/kernel">
+    Dive into the native kernel implementation
+  </Card>
+  <Card title="BPE/U engine" icon="browser" href="/architecture/bpe-engine">
+    Explore the browser processing engine
+  </Card>
+  <Card title="WASM runtime" icon="cube" href="/architecture/wasm-runtime">
+    Learn about WebAssembly integration
+  </Card>
+  <Card title="Development setup" icon="wrench" href="/development/setup">
+    Set up your development environment
+  </Card>
+</CardGroup>

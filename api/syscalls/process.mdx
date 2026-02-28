@@ -1,0 +1,450 @@
+---
+title: Process Management
+description: System calls for process creation, execution, and lifecycle management
+---
+
+## SYS_EXIT
+
+Terminate the calling process with an exit code.
+
+**Syscall Number:** 0
+
+### Parameters
+
+<ParamField path="code" type="int" required>
+  Exit status code to return to parent process via waitpid
+</ParamField>
+
+### Returns
+
+This syscall does not return. The process transitions to ZOMBIE state and the scheduler runs.
+
+### Behavior
+
+<Warning>
+  If PID 0 or PID 1 (init) calls `SYS_EXIT`, the kernel panics and halts the system. The init process must never exit.
+</Warning>
+
+When a process exits:
+1. The process state changes to `PROC_ZOMBIE`
+2. The exit code is stored in `procs[pid].exit_code`
+3. SIGCHLD is sent to the parent process
+4. If the parent is blocked in `waitpid`, it is awakened
+5. All children are reparented to PID 0
+6. The scheduler is invoked to run another process
+
+### Example
+
+<CodeGroup>
+```c C
+void _start() {
+    // Do work...
+    
+    // Exit with success
+    asm volatile(
+        "mov $0, %%rax\n"      // SYS_EXIT
+        "mov $0, %%rdi\n"      // code = 0
+        "syscall"
+        ::: "rax", "rdi", "rcx", "r11", "memory"
+    );
+}
+```
+
+```asm Assembly
+mov rax, 0          ; SYS_EXIT
+mov rdi, 42         ; Exit code 42
+syscall
+```
+</CodeGroup>
+
+---
+
+## SYS_FORK
+
+Create a child process by duplicating the calling process.
+
+**Syscall Number:** 3
+
+### Parameters
+
+None
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - In parent process: child PID (positive integer)
+  - In child process: 0
+  - On error: -1
+</ResponseField>
+
+### Behavior
+
+Creates a new process that is an exact copy of the calling process:
+- Address space is duplicated via copy-on-write page tables
+- File descriptor table is copied
+- Signal handlers are inherited
+- `vruntime`, priority, and timeslice are copied
+- Child starts with empty pending signals
+- Child's parent PID is set to the caller's PID
+- Child's state is set to `PROC_READY`
+
+### Implementation
+
+```c
+int proc_fork(void) {
+    struct process *parent = &procs[current_pid];
+    
+    // Find free process slot
+    for (int i = 0; i < PROC_MAX; i++) {
+        if (procs[i].state == PROC_UNUSED) {
+            procs[i].state = PROC_READY;
+            procs[i].ppid = parent->pid;
+            
+            // Clone address space
+            procs[i].pml4_phys = paging_clone_address_space(parent->pml4_phys);
+            
+            // Copy context, fd table, signal handlers
+            procs[i].ctx = parent->ctx;
+            // ... (see process.c:91-122)
+            
+            return procs[i].pid;  // Return child PID to parent
+        }
+    }
+    return -1;  // No free process slots
+}
+```
+
+### Example
+
+<CodeGroup>
+```c C
+int pid = fork_syscall();
+
+if (pid == 0) {
+    // Child process
+    write_syscall(1, "Child\n", 6);
+    exit_syscall(0);
+} else if (pid > 0) {
+    // Parent process
+    write_syscall(1, "Parent\n", 7);
+    waitpid_syscall(pid, NULL);
+} else {
+    // Error
+}
+```
+</CodeGroup>
+
+---
+
+## SYS_EXECVE
+
+Replace the current process image with a new program loaded from an ELF binary.
+
+**Syscall Number:** 4
+
+### Parameters
+
+<ParamField path="path" type="const char*" required>
+  Path to the ELF executable file
+</ParamField>
+
+<ParamField path="argv" type="const char**">
+  Argument vector (currently unused)
+</ParamField>
+
+<ParamField path="envp" type="const char**">
+  Environment variables (currently unused)
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - On success: does not return (execution starts at ELF entry point)
+  - On error: -1
+</ResponseField>
+
+### Behavior
+
+1. Resolves the file path using VFS
+2. Reads the entire ELF file into kernel memory
+3. Parses and loads ELF segments into the current process's address space
+4. Allocates a new user stack (4 pages at `0x7FFFFF000`)
+5. Updates process context (RIP, RSP, RBP) to start at ELF entry point
+6. Returns to user mode at the new entry point
+
+<Note>
+  The current implementation is marked as "Stub" in the API reference but is fully functional. File descriptors and signal handlers are preserved across execve.
+</Note>
+
+### Example
+
+```c
+const char *path = "/bin/shell";
+const char *argv[] = {"/bin/shell", NULL};
+const char *envp[] = {NULL};
+
+execve_syscall(path, argv, envp);
+// This line only executes if execve fails
+```
+
+---
+
+## SYS_WAITPID
+
+Wait for a child process to change state (exit or be killed).
+
+**Syscall Number:** 5
+
+### Parameters
+
+<ParamField path="pid" type="int" required>
+  - `> 0`: Wait for specific child with this PID
+  - `-1`: Wait for any child process
+</ParamField>
+
+<ParamField path="status" type="int*">
+  Pointer to store child's exit code (can be NULL)
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - On success: PID of the child that exited
+  - On error or no children: -1
+</ResponseField>
+
+### Behavior
+
+<Info>
+  This is a blocking syscall. If no matching zombie child exists, the caller is blocked (state set to `PROC_BLOCKED`) until a child exits.
+</Info>
+
+The implementation performs two scans:
+1. **First scan**: Check for already-zombie children
+2. **If none found**: Block the process and reschedule
+3. **After wakeup**: Scan again for zombie children
+4. **On match**: Reap the zombie (set state to `PROC_UNUSED`) and return its PID
+
+### Example
+
+```c
+int pid = fork_syscall();
+if (pid == 0) {
+    // Child: do work and exit
+    exit_syscall(42);
+}
+
+// Parent: wait for child
+int status;
+int child_pid = waitpid_syscall(pid, &status);
+if (child_pid > 0) {
+    // status now contains 42
+}
+```
+
+---
+
+## SYS_YIELD
+
+Voluntarily yield the CPU to the scheduler.
+
+**Syscall Number:** 2
+
+### Parameters
+
+None
+
+### Returns
+
+<ResponseField name="return" type="int">
+  Always returns 0
+</ResponseField>
+
+### Behavior
+
+Calls `schedule()` to invoke the scheduler. The current process remains in `PROC_RUNNING` state but is moved to the back of its priority queue, allowing other processes to run.
+
+### Example
+
+```c
+while (waiting_for_event) {
+    yield_syscall();  // Give other processes a chance to run
+}
+```
+
+---
+
+## SYS_GETPID
+
+Get the process ID of the calling process.
+
+**Syscall Number:** 30
+
+### Parameters
+
+None
+
+### Returns
+
+<ResponseField name="return" type="int">
+  Current process ID (0 to PROC_MAX-1)
+</ResponseField>
+
+### Example
+
+```c
+int my_pid = getpid_syscall();
+```
+
+---
+
+## SYS_KILL
+
+Send a signal to a process.
+
+**Syscall Number:** 29
+
+### Parameters
+
+<ParamField path="pid" type="int" required>
+  Target process ID
+</ParamField>
+
+<ParamField path="sig" type="int" required>
+  Signal number (9 = SIGKILL, 11 = SIGSEGV, 13 = SIGPIPE, 17 = SIGCHLD)
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - On success: 0
+  - On error (invalid PID or unused process): -1
+</ResponseField>
+
+### Behavior
+
+<Warning>
+  SIGKILL (9) is special: it immediately sets the target process to ZOMBIE state with exit code `128 + sig`. It cannot be caught or blocked.
+</Warning>
+
+For other signals:
+- The signal bit is set in `procs[target].pending_signals`
+- If the process has registered a handler via `SYS_SIGACTION`, it will be invoked
+- Signals are delivered on return to user mode
+
+### Example
+
+```c
+// Kill process 5
+kill_syscall(5, 9);  // SIGKILL
+```
+
+---
+
+## SYS_SIGACTION
+
+Register or query a signal handler.
+
+**Syscall Number:** 32
+
+### Parameters
+
+<ParamField path="signum" type="int" required>
+  Signal number (0-31)
+</ParamField>
+
+<ParamField path="handler" type="void (*)(int)" required>
+  Function pointer to signal handler, or `SIG_DFL` (0) or `SIG_IGN` (1)
+</ParamField>
+
+<ParamField path="oldhandler" type="void (**)(int)">
+  If non-NULL, receives the previous handler
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - On success: 0
+  - On error (invalid signal or attempt to catch SIGKILL): -1
+</ResponseField>
+
+### Example
+
+```c
+void my_handler(int sig) {
+    // Handle signal
+}
+
+sigaction_syscall(11, my_handler, NULL);  // Catch SIGSEGV
+```
+
+---
+
+## SYS_CLOCK
+
+Get a timestamp from the Time Stamp Counter (TSC).
+
+**Syscall Number:** 18
+
+### Parameters
+
+<ParamField path="clockid" type="int">
+  Clock identifier (currently ignored)
+</ParamField>
+
+<ParamField path="ts" type="struct timespec*">
+  Pointer to timespec structure (currently ignored)
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="uint64_t">
+  Current TSC value (CPU cycle counter)
+</ResponseField>
+
+### Implementation
+
+```c
+case SYS_CLOCK: {
+    uint32_t lo, hi;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+```
+
+---
+
+## SYS_NANOSLEEP
+
+Sleep for a specified duration.
+
+**Syscall Number:** 35
+
+### Parameters
+
+<ParamField path="nanoseconds" type="uint64_t" required>
+  Duration to sleep in nanoseconds
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  Always returns 0 after waking
+</ResponseField>
+
+### Behavior
+
+Converts nanoseconds to system timer ticks (1 kHz PIT), sets `wake_tick`, and blocks the process until the timer interrupt handler wakes it.
+
+```c
+uint64_t ticks = nanoseconds / 1000000;  // ns to ms
+procs[current_pid].wake_tick = global_tick + ticks;
+procs[current_pid].state = PROC_BLOCKED;
+schedule();
+```
+
+### Example
+
+```c
+nanosleep_syscall(1000000000);  // Sleep for 1 second
+```

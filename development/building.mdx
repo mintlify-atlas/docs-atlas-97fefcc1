@@ -1,0 +1,319 @@
+---
+title: Building Aurora OS
+description: Compile the kernel, create bootable ISOs, and run Aurora OS in QEMU
+---
+
+## Build Commands
+
+Aurora OS uses a Makefile-based build system with multiple targets:
+
+<CodeGroup>
+  ```bash Full Build
+  make build
+  ```
+
+  ```bash Bootable ISO
+  make iso
+  ```
+
+  ```bash Build and Run
+  make run
+  ```
+
+  ```bash Clean Build
+  make clean
+  make build
+  ```
+</CodeGroup>
+
+---
+
+## Build Process
+
+<Steps>
+  <Step title="Build Rust Components">
+    The kernel includes a Rust-based capability system that must be built first:
+
+    ```bash
+    # Automatic (included in make build)
+    make rust-caps
+
+    # Manual build
+    cd rust/caps
+    cargo build --release --target x86_64-unknown-none
+    ```
+
+    This produces `libaurora_caps.a` which is statically linked into the kernel.
+
+    <Info>
+    The Rust code is `no_std` and targets the bare-metal `x86_64-unknown-none` platform.
+    </Info>
+  </Step>
+
+  <Step title="Compile C Sources">
+    The kernel C code is compiled with freestanding flags:
+
+    ```bash
+    # Compiler: x86_64-elf-gcc
+    # Flags:
+    #   -ffreestanding    No standard library
+    #   -nostdlib         No libc or crtX
+    #   -mno-red-zone     Required for interrupt handlers
+    #   -mcmodel=kernel   Kernel code model (top 2 GiB)
+    #   -fstack-protector-strong  Stack protection
+    ```
+
+    All `.c` files in `kernel/src/` are compiled to object files in `dist/obj/`.
+  </Step>
+
+  <Step title="Assemble Sources">
+    Assembly files (`.S`) are assembled using GAS syntax:
+
+    ```bash
+    # Architecture-specific assembly
+    # - kernel/arch/x86_64/boot.S
+    # - kernel/arch/x86_64/interrupts.S
+    ```
+  </Step>
+
+  <Step title="Link Kernel ELF">
+    All object files and the Rust library are linked using a custom linker script:
+
+    ```bash
+    x86_64-elf-ld -T kernel/kernel.ld -o dist/aurora-kernel.elf \
+      dist/obj/**/*.o rust/caps/target/x86_64-unknown-none/release/libaurora_caps.a \
+      --no-undefined
+    ```
+
+    <Warning>
+    The `--no-undefined` flag ensures all symbols are resolved at link time.
+    </Warning>
+  </Step>
+</Steps>
+
+---
+
+## Creating Bootable ISOs
+
+The `make iso` target creates a bootable ISO image using the Limine bootloader:
+
+```bash
+make iso
+```
+
+### ISO Build Process
+
+<Steps>
+  <Step title="Build Kernel">
+    Automatically runs `make build` if the kernel hasn't been built yet.
+  </Step>
+
+  <Step title="Prepare ISO Directory">
+    ```bash
+    mkdir -p dist/iso/boot/limine
+    cp dist/aurora-kernel.elf dist/iso/boot/
+    cp bootloader/legacy/limine.cfg dist/iso/boot/limine/
+    ```
+  </Step>
+
+  <Step title="Create ISO Image">
+    ```bash
+    xorriso -as mkisofs \
+      -b boot/limine/limine-bios-cd.bin \
+      -no-emul-boot -boot-load-size 4 -boot-info-table \
+      --efi-boot boot/limine/limine-uefi-cd.bin \
+      -efi-boot-part --efi-boot-image \
+      -o dist/aurora-os.iso dist/iso
+    ```
+
+    This creates a hybrid ISO that boots on both BIOS and UEFI systems.
+  </Step>
+</Steps>
+
+<Tip>
+The resulting ISO is located at `dist/aurora-os.iso` and can be burned to USB or CD.
+</Tip>
+
+---
+
+## Running in QEMU
+
+<Tabs>
+  <Tab title="Standard Run">
+    ```bash
+    make run
+    ```
+
+    This boots the ISO in QEMU with:
+    - 128 MB RAM
+    - Serial output to stdio
+    - SDL display window
+    - No automatic reboot on crash
+
+    <CodeGroup>
+      ```bash QEMU Command
+      qemu-system-x86_64 \
+        -cdrom dist/aurora-os.iso \
+        -m 128M \
+        -serial stdio \
+        -display sdl \
+        -no-reboot
+      ```
+    </CodeGroup>
+  </Tab>
+
+  <Tab title="Headless (CI)">
+    ```bash
+    make run-ci
+    ```
+
+    Runs without graphical display for automated testing:
+
+    ```bash
+    qemu-system-x86_64 \
+      -cdrom dist/aurora-os.iso \
+      -m 128M \
+      -nographic \
+      -serial mon:stdio \
+      -no-reboot \
+      -timeout 10
+    ```
+
+    <Info>
+    Perfect for CI pipelines and automated boot tests.
+    </Info>
+  </Tab>
+</Tabs>
+
+---
+
+## Build Configuration
+
+### Architecture Selection
+
+```bash
+# Default: x86_64
+make build ARCH=x86_64
+
+# Future: ARM64 support
+make build ARCH=aarch64
+```
+
+### Compiler Overrides
+
+```bash
+# Use system GCC instead of cross-compiler
+make build CC=gcc AS_GAS=gcc LD=ld OBJCOPY=objcopy
+
+# Use Clang
+make build CC=clang LD=ld.lld
+```
+
+<Warning>
+Using system compilers may produce incompatible binaries. The cross-compiler (`x86_64-elf-gcc`) is recommended.
+</Warning>
+
+---
+
+## WebAssembly Build
+
+Aurora OS can also compile a kernel bridge for WebAssembly runtime:
+
+```bash
+make wasm
+```
+
+This uses Emscripten to compile the kernel bridge:
+
+<CodeGroup>
+  ```bash Build Command
+  emcc wasm-runtime/bridge/kernel-wasm.c -o wasm-runtime/pwa/kernel.js \
+    -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","UTF8ToString"]' \
+    -s ALLOW_MEMORY_GROWTH=1 \
+    -s INITIAL_MEMORY=16777216 \
+    -s MODULARIZE=1 \
+    -s EXPORT_NAME='AuroraKernel' \
+    -s ENVIRONMENT='web' \
+    -s NO_EXIT_RUNTIME=1 \
+    -s FILESYSTEM=0 \
+    -O2
+  ```
+</CodeGroup>
+
+Output:
+- `wasm-runtime/pwa/kernel.js` - JavaScript loader
+- `wasm-runtime/pwa/kernel.wasm` - WebAssembly binary
+
+---
+
+## Build Artifacts
+
+After a successful build, the `dist/` directory contains:
+
+```
+dist/
+├── aurora-kernel.elf      # Kernel ELF binary
+├── aurora-os.iso          # Bootable ISO image
+├── obj/                   # Object files
+│   └── kernel/
+│       ├── src/
+│       └── arch/
+└── iso/                   # ISO staging directory
+    └── boot/
+```
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Undefined Reference Errors">
+    ```bash
+    # Ensure Rust library is built first
+    make clean
+    make rust-caps
+    make build
+    ```
+
+    Check that `rust/caps/target/x86_64-unknown-none/release/libaurora_caps.a` exists.
+  </Accordion>
+
+  <Accordion title="QEMU Not Found">
+    ```bash
+    # Install QEMU for your platform
+    sudo apt-get install qemu-system-x86    # Debian/Ubuntu
+    sudo dnf install qemu-system-x86        # Fedora
+    sudo pacman -S qemu-full                # Arch
+    ```
+  </Accordion>
+
+  <Accordion title="ISO Creation Fails">
+    Ensure `xorriso` and `mtools` are installed:
+
+    ```bash
+    sudo apt-get install xorriso mtools grub-pc-bin
+    ```
+  </Accordion>
+
+  <Accordion title="Stack Protector Errors">
+    If you see `undefined reference to __stack_chk_fail`:
+
+    ```bash
+    # The kernel must provide this symbol
+    # Check kernel/src/security/stack-protector.c
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Run Tests" icon="vial" href="./testing">
+    Validate your build with the test suite
+  </Card>
+  <Card title="Contributing" icon="code-pull-request" href="./contributing">
+    Learn the contribution workflow
+  </Card>
+</CardGroup>

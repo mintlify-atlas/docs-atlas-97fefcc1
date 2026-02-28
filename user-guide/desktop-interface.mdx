@@ -1,0 +1,302 @@
+---
+title: 'Desktop Interface'
+description: 'Navigate the Aurora OS desktop environment with glass morphism, window management, and smooth animations'
+icon: 'desktop'
+---
+
+## Overview
+
+Aurora OS features a modern desktop environment that blends macOS vibrancy with Windows Fluent depth. Every interaction is GPU-accelerated and runs at 60fps with careful attention to polish and detail.
+
+<CardGroup cols={2}>
+  <Card title="Glass Morphism" icon="sparkles">
+    Translucent surfaces with backdrop blur and subtle tints create depth
+  </Card>
+  <Card title="60fps Animations" icon="bolt">
+    All animations use GPU-friendly transforms with 380ms window open, 240ms close
+  </Card>
+  <Card title="Adaptive Themes" icon="palette">
+    Light and dark themes with automatic system detection and smooth transitions
+  </Card>
+  <Card title="Responsive Design" icon="mobile">
+    Works seamlessly on desktop, tablet, and mobile browsers
+  </Card>
+</CardGroup>
+
+## Design Language
+
+The Aurora OS design system is built on clean, minimal, rounded geometry with meaningful motion.
+
+### Visual Principles
+
+- **Rounded Corners**: 8px (small), 12px (medium), 18px (large) radii
+- **Layered Depth**: Frosted glass with soft shadows and elevation
+- **Motion**: Micro-interactions (80-160ms), macro transitions (240-420ms)
+- **Accessibility**: AA contrast ratios, focus indicators, reduced motion support
+
+<Note>
+  All animations respect `prefers-reduced-motion` for accessibility
+</Note>
+
+## Theme System
+
+<Tabs>
+  <Tab title="Light Theme">
+    Aurora Light features clean whites and subtle grays with vibrant accent colors:
+
+    - Background: `#f6f8fb`
+    - Surface: `#ffffff`
+    - Text Primary: `#0f1724`
+    - Accent: `#0066ff`
+    - Glass Tint: `rgba(255,255,255,0.7)`
+  </Tab>
+  <Tab title="Dark Theme">
+    Aurora Dark provides deep blacks with comfortable contrast:
+
+    - Background: `#0b0f14`
+    - Surface: `#0f1720`
+    - Text Primary: `#e6eef6`
+    - Accent: `#4791ff`
+    - Glass Tint: `rgba(12,16,20,0.5)`
+  </Tab>
+</Tabs>
+
+### Changing Themes
+
+Switch themes using the Settings app or keyboard shortcut:
+
+1. Open **Settings** from the app dock
+2. Navigate to **Appearance**
+3. Select Light, Dark, or System (follows OS preference)
+
+You can also use the Quick Settings panel in the top-right corner for instant theme switching.
+
+## Window Management
+
+Aurora OS includes a sophisticated window manager (AdvancedWM) with snapping, tiling, and pinning.
+
+### Window Controls
+
+Each window features macOS-style traffic lights on the left:
+
+<Accordion title="Window Control Buttons">
+  - **Red (Close)**: Closes the window with a 240ms fade-out animation
+  - **Yellow (Minimize)**: Minimizes window to dock (currently returns focus to desktop)
+  - **Green (Maximize)**: Toggles fullscreen mode
+</Accordion>
+
+### Advanced Features
+
+<CardGroup cols={2}>
+  <Card title="Snap Zones" icon="grid">
+    Drag windows to screen edges for automatic snap:
+    - Left/Right: 50% width split
+    - Top: Maximize
+    - Corners: 25% quadrant snap
+  </Card>
+  <Card title="Window Tiling" icon="table-cells">
+    Press `Super + T` or run `tile` in Terminal to automatically arrange all open windows in a grid
+  </Card>
+  <Card title="Cascade Layout" icon="layer-group">
+    Press `Super + C` or run `cascade` to arrange windows in an overlapping cascade
+  </Card>
+  <Card title="Exposé View" icon="grid-2-plus">
+    Press `F3` or run `expo` to see all windows at once in mission control style
+  </Card>
+</CardGroup>
+
+### Window Pinning
+
+Keep important windows always on top:
+
+```bash
+# Pin the active window (stays above others)
+Right-click titlebar → Pin Window
+```
+
+<Tip>
+  Pinned windows display a pin icon in the titlebar and maintain focus priority
+</Tip>
+
+## Desktop Elements
+
+### Wallpaper System
+
+Aurora OS includes 11 beautiful wallpapers with parallax mouse-tracking:
+
+<Accordion title="Available Wallpapers">
+  **Photo Wallpapers** (WebP format):
+  - Northern Lights
+  - Mountain Lake
+  - Starry Mountains
+  - Foggy Forest
+  - Ocean Sunset
+  - Earth from Space
+  - Mountain Peak
+  - Calm Lake
+
+  **Vector Wallpapers** (SVG format):
+  - Aurora Dark - Gradient mesh with animated particles
+  - Geometric Dark - Abstract shapes
+  - Night Sky - Starfield animation
+</Accordion>
+
+### Parallax Effect
+
+The wallpaper subtly follows your mouse movement, creating depth. Disable this in Settings → Appearance if you prefer static backgrounds.
+
+## Dock & Taskbar
+
+The dock displays running applications and favorites with hover effects and bounce animations.
+
+### Dock Features
+
+- **Auto-hide**: Dock hides after 200ms, reveals on hover
+- **Icon Scale**: Icons scale to 1.06× on hover with smooth transitions
+- **Running Indicators**: Blue dots below active applications
+- **Drag to Reorder**: Customize icon order by dragging
+
+<Note>
+  The dock uses `backdrop-filter: blur(8px)` for that signature frosted glass look
+</Note>
+
+## Top Bar
+
+The top bar provides quick access to system controls and information.
+
+### Left Section
+- **Apple Menu** (🍎): System menu with About, Settings, Sleep, Restart, Shut Down
+- **Current App Name**: Shows the focused application
+
+### Center Section
+- **Clock**: Real-time clock with timezone support (respects `Intl.DateTimeFormat`)
+
+### Right Section (Control Center)
+
+<CardGroup cols={2}>
+  <Card title="WiFi" icon="wifi">
+    Network status and connection controls
+  </Card>
+  <Card title="Bluetooth" icon="bluetooth">
+    Bluetooth device management
+  </Card>
+  <Card title="Battery" icon="battery-full">
+    Battery level and charging status (uses Battery Status API)
+  </Card>
+  <Card title="Volume" icon="volume-high">
+    System volume controls with mute toggle
+  </Card>
+  <Card title="Do Not Disturb" icon="moon">
+    Silence notifications temporarily
+  </Card>
+  <Card title="User Menu" icon="user">
+    Profile, Settings, Lock Screen, Log Out
+  </Card>
+</CardGroup>
+
+## Notifications
+
+Aurora OS features a stacking notification system with grouping and persistence.
+
+### Notification Features
+
+- **Grouping**: Multiple notifications from the same app stack together
+- **Priority Levels**: Normal (5s display) and Critical (10s display)
+- **History**: View all notifications in the Notification Center
+- **Persistence**: Notification history survives page reloads (localStorage)
+- **Do Not Disturb**: Suppresses non-critical notifications
+
+### Notification Panel
+
+Click the bell icon (🔔) in the top-right to open the Notification Center:
+
+- View grouped notifications
+- Expand groups to see all messages
+- Clear individual items or clear all
+- Notification timestamps with localization
+
+<Tip>
+  Critical notifications (system updates, errors) always show even in Do Not Disturb mode
+</Tip>
+
+## Spotlight Search
+
+Quick access to apps, files, and system commands.
+
+### Using Spotlight
+
+1. Press `Cmd/Super + Space` to open
+2. Type your query
+3. Press Enter to open the top result
+4. Press Escape to close
+
+### Search Capabilities
+
+- Application names and IDs
+- File and folder paths
+- Recent documents
+- System commands
+- Terminal commands (prefix with `>`)
+
+<CodeGroup>
+```bash Terminal Commands
+# Search filesystem
+> search config
+
+# Open application
+> open terminal
+
+# Run system info
+> sysinfo
+```
+</CodeGroup>
+
+## Performance
+
+Aurora OS is engineered for smooth performance:
+
+- **Boot Time**: < 2 seconds to desktop (after BIOS/bootloader sequence)
+- **Window Animations**: 380ms open, 240ms close with easing
+- **Button Response**: 120ms interaction feedback
+- **Memory Efficient**: Optimized for low overhead
+- **GPU Accelerated**: All animations use CSS transforms and opacity
+
+### Animation System
+
+<Accordion title="Easing Functions">
+  - **Sharp Easing**: `cubic-bezier(.2,.9,.3,1)` for entering UI
+  - **Smooth Easing**: `cubic-bezier(.22,.12,.36,1)` for exits and overlays
+  - **Overshoot**: Window open includes a subtle scale bounce (0.998 → 1.006 → 1.0)
+</Accordion>
+
+## Accessibility Features
+
+<CardGroup cols={2}>
+  <Card title="Keyboard Navigation" icon="keyboard">
+    Full keyboard control with visible focus indicators
+  </Card>
+  <Card title="High Contrast" icon="circle-half-stroke">
+    Optional high contrast mode for better visibility
+  </Card>
+  <Card title="Reduced Motion" icon="ban">
+    Respects `prefers-reduced-motion` to disable animations
+  </Card>
+  <Card title="Screen Reader Support" icon="universal-access">
+    Semantic HTML with ARIA labels for assistive technology
+  </Card>
+</CardGroup>
+
+## Customization
+
+Personalize your desktop through the Settings app:
+
+1. **Wallpaper**: Choose from 11 built-in wallpapers
+2. **Theme**: Light, Dark, or System
+3. **Accent Color**: Primary and secondary accent colors
+4. **Dock Position**: Bottom, Left, or Right
+5. **Animation Speed**: Fast, Normal, or Slow
+6. **Parallax**: Enable/disable wallpaper mouse tracking
+
+<Note>
+  Settings are persisted in localStorage and survive browser restarts
+</Note>

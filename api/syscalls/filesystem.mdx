@@ -1,0 +1,504 @@
+---
+title: Filesystem Operations
+description: System calls for file and directory manipulation via VFS
+---
+
+## SYS_OPEN
+
+Open a file or device and return a file descriptor.
+
+**Syscall Number:** 6
+
+### Parameters
+
+<ParamField path="path" type="const char*" required>
+  Path to the file or device to open (e.g., "/dev/tty", "/home/user/file.txt")
+</ParamField>
+
+<ParamField path="flags" type="int">
+  Open flags (currently stored but not enforced)
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - On success: file descriptor (0-31)
+  - On error: -1 (file not found or no free fd slots)
+</ResponseField>
+
+### Behavior
+
+1. Resolves the path using `vfs_resolve()`
+2. Searches the process's fd table for an unused entry
+3. Marks the entry as in-use and associates it with the VFS node
+4. Sets the file offset to 0
+5. Returns the fd index
+
+<Note>
+  File descriptors 0, 1, and 2 are pre-allocated for stdin, stdout, and stderr during process creation.
+</Note>
+
+### Example
+
+<CodeGroup>
+```c C
+int fd = open_syscall("/tmp/test.txt", 0);
+if (fd >= 0) {
+    // Use fd for read/write operations
+    close_syscall(fd);
+}
+```
+
+```asm Assembly
+mov rax, 6                  ; SYS_OPEN
+lea rdi, [path]             ; Path string
+mov rsi, 0                  ; Flags
+syscall
+```
+</CodeGroup>
+
+---
+
+## SYS_CLOSE
+
+Close a file descriptor and release associated resources.
+
+**Syscall Number:** 7
+
+### Parameters
+
+<ParamField path="fd" type="int" required>
+  File descriptor to close
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - On success: 0
+  - On error: -1 (invalid fd or not in use)
+</ResponseField>
+
+### Behavior
+
+Marks the fd table entry as unused and clears the VFS node pointer. If the fd is associated with a pipe, the pipe may be released when both ends are closed.
+
+### Example
+
+```c
+close_syscall(3);
+```
+
+---
+
+## SYS_READ
+
+Read bytes from a file descriptor into a buffer.
+
+**Syscall Number:** 8
+
+### Parameters
+
+<ParamField path="fd" type="int" required>
+  File descriptor to read from
+</ParamField>
+
+<ParamField path="buf" type="void*" required>
+  Buffer to store read data
+</ParamField>
+
+<ParamField path="count" type="size_t" required>
+  Maximum number of bytes to read
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="ssize_t">
+  - On success: number of bytes read (may be less than count)
+  - On end-of-file: 0
+  - On error: -1
+</ResponseField>
+
+### Behavior
+
+The implementation delegates to either:
+- **Pipe**: `pipe_read()` for IPC pipes (stored in `fd_entry.fs_priv`)
+- **VFS**: `vfs_read()` for regular files and devices
+
+After a successful read, the file offset is advanced by the number of bytes read.
+
+### Implementation
+
+```c
+case SYS_READ: {
+    int fd = (int)arg1;
+    struct fd_entry *fde = &procs[current_pid].fd_table[fd];
+    
+    if (fde->fs_priv) {
+        // Pipe read
+        return (uint64_t)pipe_read((struct pipe *)fde->fs_priv, 
+                                   (void *)arg2, (size_t)arg3);
+    }
+    
+    // VFS read
+    int n = vfs_read(fde->vfs_node, fde->offset, (void *)arg2, (size_t)arg3);
+    if (n > 0) fde->offset += n;
+    return (uint64_t)n;
+}
+```
+
+### Example
+
+```c
+char buffer[256];
+int n = read_syscall(fd, buffer, sizeof(buffer));
+if (n > 0) {
+    // Process n bytes in buffer
+}
+```
+
+---
+
+## SYS_WRITE
+
+Write bytes from a buffer to a file descriptor.
+
+**Syscall Number:** 1
+
+### Parameters
+
+<ParamField path="fd" type="int" required>
+  File descriptor to write to
+</ParamField>
+
+<ParamField path="buf" type="const void*" required>
+  Buffer containing data to write
+</ParamField>
+
+<ParamField path="count" type="size_t" required>
+  Number of bytes to write
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="ssize_t">
+  - On success: number of bytes written
+  - On error: -1
+</ResponseField>
+
+### Behavior
+
+Delegates to:
+- **Pipe**: `pipe_write()` if the fd is associated with a pipe
+- **VFS**: `vfs_write()` for regular files
+- **Fallback**: Direct VGA output for early boot before VFS is initialized
+
+### Example
+
+```c
+const char *msg = "Hello, world!\n";
+write_syscall(1, msg, 14);  // Write to stdout
+```
+
+---
+
+## SYS_STAT
+
+Get file status information by path.
+
+**Syscall Number:** 9
+
+### Parameters
+
+<ParamField path="path" type="const char*" required>
+  Path to the file
+</ParamField>
+
+<ParamField path="statbuf" type="struct vfs_stat*" required>
+  Pointer to stat structure to fill
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - On success: 0
+  - On error: -1 (file not found)
+</ResponseField>
+
+### vfs_stat Structure
+
+```c
+struct vfs_stat {
+    uint64_t inode;
+    uint64_t size;
+    int      type;    // VFS_FILE or VFS_DIR
+    int      mode;    // Unix permissions (e.g., 0755)
+    int      nlink;   // Number of hard links
+};
+```
+
+### Example
+
+```c
+struct vfs_stat st;
+if (stat_syscall("/home/user/file.txt", &st) == 0) {
+    printf("Size: %lu bytes\n", st.size);
+}
+```
+
+---
+
+## SYS_FSTAT
+
+Get file status information by file descriptor.
+
+**Syscall Number:** 34
+
+### Parameters
+
+<ParamField path="fd" type="int" required>
+  File descriptor
+</ParamField>
+
+<ParamField path="statbuf" type="struct vfs_stat*" required>
+  Pointer to stat structure to fill
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - On success: 0
+  - On error: -1 (invalid fd or no VFS node)
+</ResponseField>
+
+---
+
+## SYS_LSEEK
+
+Reposition the file offset for a file descriptor.
+
+**Syscall Number:** 33
+
+### Parameters
+
+<ParamField path="fd" type="int" required>
+  File descriptor
+</ParamField>
+
+<ParamField path="offset" type="int64_t" required>
+  Offset value (interpretation depends on whence)
+</ParamField>
+
+<ParamField path="whence" type="int" required>
+  - `0` (SEEK_SET): Set offset to `offset`
+  - `1` (SEEK_CUR): Set offset to current position + `offset`
+  - `2` (SEEK_END): Set offset to file size + `offset`
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int64_t">
+  - On success: new file offset
+  - On error: -1
+</ResponseField>
+
+### Example
+
+```c
+// Seek to beginning
+lseek_syscall(fd, 0, 0);
+
+// Seek to end
+lseek_syscall(fd, 0, 2);
+
+// Seek forward 100 bytes
+lseek_syscall(fd, 100, 1);
+```
+
+---
+
+## SYS_GETDENTS
+
+Read directory entries from an open directory file descriptor.
+
+**Syscall Number:** 10
+
+### Parameters
+
+<ParamField path="fd" type="int" required>
+  File descriptor for an open directory
+</ParamField>
+
+<ParamField path="index" type="uint32_t" required>
+  Index of the directory entry to read (0-based)
+</ParamField>
+
+<ParamField path="buf" type="char*" required>
+  Buffer to store the entry name (null-terminated string)
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - On success: 1 (entry found and copied)
+  - At end of directory: 0
+  - On error: -1
+</ResponseField>
+
+### Behavior
+
+Calls `vfs_readdir()` to get the VFS node for the child at the given index, then copies the child's name to the user buffer.
+
+### Example
+
+```c
+int fd = open_syscall("/home", 0);
+if (fd >= 0) {
+    char name[256];
+    for (int i = 0; ; i++) {
+        int ret = getdents_syscall(fd, i, name);
+        if (ret == 0) break;  // End of directory
+        if (ret > 0) {
+            printf("Entry: %s\n", name);
+        }
+    }
+    close_syscall(fd);
+}
+```
+
+---
+
+## SYS_MKDIR
+
+Create a new directory.
+
+**Syscall Number:** 11
+
+### Parameters
+
+<ParamField path="path" type="const char*" required>
+  Path of the directory to create (e.g., "/tmp/newdir")
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - On success: 0
+  - On error: -1
+</ResponseField>
+
+### Behavior
+
+<Note>
+  Current implementation only supports creating directories under the root ("/"). The leading "/" is stripped before calling `vfs_mkdir()`.
+</Note>
+
+---
+
+## SYS_UNLINK
+
+Remove a file or directory entry.
+
+**Syscall Number:** 12
+
+### Parameters
+
+<ParamField path="path" type="const char*" required>
+  Path to the file to remove
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - On success: 0
+  - On error: -1
+</ResponseField>
+
+---
+
+## SYS_GETCWD
+
+Get the current working directory.
+
+**Syscall Number:** 17
+
+### Parameters
+
+<ParamField path="buf" type="char*" required>
+  Buffer to store the path
+</ParamField>
+
+<ParamField path="size" type="size_t" required>
+  Size of the buffer
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="char*">
+  - On success: pointer to buf (same as arg1)
+  - On error: -1
+</ResponseField>
+
+### Behavior
+
+<Info>
+  Aurora OS currently does not maintain per-process working directories. This syscall always returns "/" (root directory).
+</Info>
+
+```c
+buf[0] = '/';
+buf[1] = '\0';
+return arg1;
+```
+
+---
+
+## SYS_IOCTL
+
+Perform device-specific control operations.
+
+**Syscall Number:** 36
+
+### Parameters
+
+<ParamField path="fd" type="int" required>
+  File descriptor
+</ParamField>
+
+<ParamField path="request" type="int" required>
+  Device-specific request code
+</ParamField>
+
+<ParamField path="argp" type="void*">
+  Request-specific argument pointer
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - On success: 0
+  - On error: -1
+</ResponseField>
+
+### Supported Requests
+
+#### TIOCGWINSZ (0x5413)
+
+Get terminal window size.
+
+```c
+struct winsize {
+    uint16_t ws_row;     // 24 (hardcoded)
+    uint16_t ws_col;     // 80 (hardcoded)
+    uint16_t ws_xpixel;  // 0
+    uint16_t ws_ypixel;  // 0
+};
+```
+
+### Example
+
+```c
+struct winsize ws;
+if (ioctl_syscall(1, 0x5413, &ws) == 0) {
+    printf("Terminal: %dx%d\n", ws.ws_col, ws.ws_row);
+}
+```

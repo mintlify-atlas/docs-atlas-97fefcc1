@@ -1,0 +1,187 @@
+---
+title: Development Setup
+description: Set up your Aurora OS development environment with all required tools and dependencies
+---
+
+## Quick Start
+
+Aurora OS provides an automated setup script that checks and installs all required dependencies:
+
+```bash
+bash setup.sh
+```
+
+This script will:
+- Check for all required system tools
+- Install missing dependencies via your package manager
+- Set up Rust toolchains and targets
+- Validate project structure
+- Run syntax checks on all source files
+
+<Info>
+The setup script supports `apt` (Debian/Ubuntu), `dnf` (Fedora), and `pacman` (Arch Linux) package managers.
+</Info>
+
+---
+
+## Manual Installation
+
+If you prefer to install dependencies manually or the automated script doesn't support your system:
+
+<Steps>
+  <Step title="Install Core Build Tools">
+    These tools are required for building the kernel:
+
+    <CodeGroup>
+      ```bash Debian/Ubuntu
+      sudo apt-get install -y build-essential gcc g++ clang llvm lld nasm \
+        qemu-system-x86 qemu-system-arm make ninja-build binutils gdb \
+        python3 python3-pip xorriso mtools grub-pc-bin
+      ```
+
+      ```bash Fedora
+      sudo dnf install -y gcc gcc-c++ clang llvm lld nasm qemu-system-x86 \
+        qemu-system-aarch64 make ninja-build binutils gdb python3 python3-pip \
+        xorriso mtools grub2-tools
+      ```
+
+      ```bash Arch Linux
+      sudo pacman -Syu --noconfirm gcc clang llvm lld nasm qemu-full make \
+        ninja binutils gdb python python-pip xorriso mtools grub
+      ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Install Rust Toolchain">
+    Aurora OS kernel uses Rust for the capability system and other components:
+
+    ```bash
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    source $HOME/.cargo/env
+    ```
+
+    Add required targets:
+    ```bash
+    rustup target add wasm32-wasip1
+    rustup target add wasm32-unknown-unknown
+    rustup target add x86_64-unknown-none
+    ```
+
+    Install development components:
+    ```bash
+    rustup component add clippy rustfmt
+    ```
+  </Step>
+
+  <Step title="Install Node.js Dependencies">
+    Required for browser-based testing with Playwright:
+
+    ```bash
+    npm install
+    npx playwright install --with-deps chromium
+    ```
+  </Step>
+
+  <Step title="Install Python Dependencies">
+    Required for CI validation scripts:
+
+    ```bash
+    pip3 install pyyaml
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Verified Tool Versions
+
+The following versions have been tested and verified to work with Aurora OS:
+
+| Tool | Version |
+|------|----------|
+| git | 2.43.0 |
+| gcc | 13.3.0 |
+| clang | 18.1.3 |
+| llvm | 18.1.3 |
+| lld | 18.1.3 |
+| nasm | 2.16.01 |
+| qemu | 8.2.2 |
+| make | 4.3 |
+| ninja | 1.11.1 |
+| gdb | 15.0 |
+| python3 | 3.12.3 |
+| rustc | 1.93.1 |
+| cargo | 1.93.1 |
+| binutils | 2.42 |
+
+<Note>
+Newer versions should generally work, but these versions are guaranteed compatible.
+</Note>
+
+---
+
+## Validation
+
+After installation, verify your environment:
+
+<CodeGroup>
+  ```bash Quick Validation
+  # Run the automated setup script in check-only mode
+  bash setup.sh
+  ```
+
+  ```bash Manual Checks
+  # Check compiler versions
+  gcc --version
+  clang --version
+  rustc --version
+
+  # Verify QEMU
+  qemu-system-x86_64 --version
+
+  # Check build tools
+  make --version
+  nasm --version
+  ```
+</CodeGroup>
+
+<Tip>
+The setup script creates a detailed log file at `/tmp/aurora-setup-[timestamp].log` for troubleshooting.
+</Tip>
+
+---
+
+## Project Structure
+
+Once setup is complete, your workspace should contain:
+
+```
+aurora-os/
+├── kernel/          # Kernel source (C and assembly)
+│   ├── src/         # Core kernel code
+│   ├── arch/        # Architecture-specific code
+│   └── include/     # Kernel headers
+├── rust/            # Rust components
+│   └── caps/        # Capability system
+├── bootloader/      # Bootloader configuration
+├── tests/           # Test suites
+│   ├── unit/        # Unit tests
+│   ├── qemu/        # QEMU boot tests
+│   └── browser/     # Browser-based tests
+├── wasm-runtime/    # WebAssembly runtime and PWA
+├── dist/            # Build output (created during build)
+└── Makefile         # Main build system
+```
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Build the Kernel" icon="hammer" href="./building">
+    Learn how to compile Aurora OS and create bootable images
+  </Card>
+  <Card title="Run Tests" icon="vial" href="./testing">
+    Set up and run the comprehensive test suite
+  </Card>
+</CardGroup>

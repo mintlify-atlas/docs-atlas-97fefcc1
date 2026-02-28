@@ -1,0 +1,465 @@
+---
+title: Contributing
+description: Learn how to contribute to Aurora OS with code, documentation, and bug reports
+---
+
+## Welcome Contributors!
+
+Thank you for your interest in contributing to Aurora OS. We welcome contributions of all kinds:
+
+- Code improvements and new features
+- Bug fixes and security patches
+- Documentation updates
+- Test coverage improvements
+- Performance optimizations
+
+---
+
+## Contribution Workflow
+
+<Steps>
+  <Step title="Fork the Repository">
+    Create your own fork of the Aurora OS repository:
+
+    ```bash
+    # On GitHub, click "Fork" button
+    # Then clone your fork
+    git clone https://github.com/YOUR-USERNAME/aurora-os.git
+    cd aurora-os
+    ```
+  </Step>
+
+  <Step title="Create a Feature Branch">
+    Always create a new branch for your changes:
+
+    ```bash
+    git checkout -b feature/my-feature
+    ```
+
+    Branch naming conventions:
+    - `feature/` - New features
+    - `fix/` - Bug fixes
+    - `docs/` - Documentation updates
+    - `refactor/` - Code refactoring
+    - `test/` - Test improvements
+
+    <CodeGroup>
+      ```bash Feature Example
+      git checkout -b feature/add-networking-stack
+      ```
+
+      ```bash Fix Example
+      git checkout -b fix/memory-leak-scheduler
+      ```
+
+      ```bash Docs Example
+      git checkout -b docs/update-api-reference
+      ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Make Your Changes">
+    Implement your changes following our coding standards:
+
+    <Tabs>
+      <Tab title="C Code">
+        - Follow kernel coding style
+        - Use meaningful variable names
+        - Add comments for complex logic
+        - Keep functions focused and small
+
+        ```c
+        // Good: Clear function name and purpose
+        int allocate_physical_page(uint64_t* phys_addr) {
+            // Implementation
+        }
+
+        // Bad: Unclear naming
+        int alloc(uint64_t* p) {
+            // Implementation
+        }
+        ```
+      </Tab>
+
+      <Tab title="Rust Code">
+        - Run `cargo fmt` before committing
+        - Use `cargo clippy` to catch issues
+        - Follow Rust idioms
+        - Add documentation comments
+
+        ```rust
+        /// Creates a new capability with the given permissions.
+        ///
+        /// # Safety
+        /// The caller must ensure the object_id is valid.
+        pub unsafe fn create_capability(
+            object_id: u64,
+            perms: Permissions,
+        ) -> Result<Capability, Error> {
+            // Implementation
+        }
+        ```
+      </Tab>
+
+      <Tab title="Documentation">
+        - Use clear, concise language
+        - Include code examples
+        - Add diagrams where helpful
+        - Test all code snippets
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Test Your Changes">
+    Run the full test suite before committing:
+
+    ```bash
+    # Run all tests
+    make test
+
+    # Test QEMU boot
+    make run
+
+    # Run source validation
+    for f in tests/source-checks/*.sh; do bash "$f"; done
+    ```
+
+    <Warning>
+    All tests must pass before your PR can be merged.
+    </Warning>
+  </Step>
+
+  <Step title="Commit Your Changes">
+    Use [Conventional Commits](https://www.conventionalcommits.org/) format:
+
+    <CodeGroup>
+      ```bash New Feature
+      git commit -m "feat: add TCP/IP networking stack"
+      ```
+
+      ```bash Bug Fix
+      git commit -m "fix: resolve memory leak in scheduler"
+      ```
+
+      ```bash Documentation
+      git commit -m "docs: update capability system guide"
+      ```
+
+      ```bash Refactor
+      git commit -m "refactor: simplify page allocator logic"
+      ```
+
+      ```bash Tests
+      git commit -m "test: add unit tests for heap allocator"
+      ```
+
+      ```bash CI/CD
+      git commit -m "ci: add ARM64 to build matrix"
+      ```
+
+      ```bash Maintenance
+      git commit -m "chore: update dependencies"
+      ```
+    </CodeGroup>
+
+    ### Commit Message Format
+
+    ```
+    <type>: <description>
+
+    [optional body]
+
+    [optional footer]
+    ```
+
+    **Types:**
+    - `feat:` - New feature
+    - `fix:` - Bug fix
+    - `docs:` - Documentation only
+    - `refactor:` - Code refactoring
+    - `test:` - Adding or updating tests
+    - `ci:` - CI/CD changes
+    - `chore:` - Maintenance tasks
+  </Step>
+
+  <Step title="Push to Your Fork">
+    ```bash
+    git push origin feature/my-feature
+    ```
+  </Step>
+
+  <Step title="Open a Pull Request">
+    1. Go to the original Aurora OS repository on GitHub
+    2. Click "New Pull Request"
+    3. Select your fork and branch
+    4. Fill out the PR template with:
+       - Description of changes
+       - Related issues
+       - Testing performed
+       - Screenshots (if applicable)
+
+    <Info>
+    PR titles should also follow conventional commit format:
+    `feat: add networking stack`
+    </Info>
+  </Step>
+</Steps>
+
+---
+
+## Code Review Process
+
+<Steps>
+  <Step title="Automated Checks">
+    Your PR will automatically run:
+
+    - Build verification (all architectures)
+    - Unit tests
+    - QEMU boot tests
+    - Source validation
+    - Linting and formatting checks
+
+    <Tip>
+    Fix any failing checks before requesting review.
+    </Tip>
+  </Step>
+
+  <Step title="Review Assignment">
+    A maintainer will be automatically assigned to review your PR.
+  </Step>
+
+  <Step title="Address Feedback">
+    Make requested changes and push updates:
+
+    ```bash
+    # Make changes based on feedback
+    git add .
+    git commit -m "refactor: address review feedback"
+    git push origin feature/my-feature
+    ```
+
+    The PR will automatically update.
+  </Step>
+
+  <Step title="Approval and Merge">
+    Once approved, a maintainer will merge your PR.
+
+    <Note>
+    All PRs require at least one approval before merging.
+    </Note>
+  </Step>
+</Steps>
+
+---
+
+## Branch Protection
+
+The `main` branch is protected with the following requirements:
+
+<Tabs>
+  <Tab title="Required Checks">
+    - All CI tests pass
+    - Build succeeds for x86_64
+    - Unit tests pass
+    - QEMU boot test passes
+    - No merge conflicts
+  </Tab>
+
+  <Tab title="Review Requirements">
+    - At least 1 approving review
+    - No requested changes
+    - Conventional commit format
+  </Tab>
+
+  <Tab title="Merge Restrictions">
+    - Squash merges preferred
+    - No force pushes to main
+    - No direct commits (must use PRs)
+  </Tab>
+</Tabs>
+
+<Info>
+See `docs/branch-protection.md` in the repository for detailed configuration.
+</Info>
+
+---
+
+## Development Guidelines
+
+### Coding Standards
+
+<AccordionGroup>
+  <Accordion title="C Kernel Code">
+    - Use C11 standard
+    - No standard library dependencies
+    - Follow existing code style
+    - Add function documentation
+    - Keep functions under 100 lines when possible
+    - Avoid global variables
+
+    ```c
+    /**
+     * Allocates a physical page frame.
+     *
+     * @param phys_addr Output pointer for physical address
+     * @return 0 on success, -ENOMEM if no memory available
+     */
+    int allocate_physical_page(uint64_t* phys_addr);
+    ```
+  </Accordion>
+
+  <Accordion title="Rust Code">
+    - Use `#![no_std]` for kernel code
+    - Run `cargo fmt` and `cargo clippy`
+    - Add `///` documentation comments
+    - Use `unsafe` only when necessary
+    - Document safety requirements
+
+    ```rust
+    #![no_std]
+
+    /// Kernel capability system.
+    pub mod caps {
+        /// A capability represents a reference to a kernel object
+        /// with specific permissions.
+        pub struct Capability {
+            // ...
+        }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Assembly Code">
+    - Use GAS syntax (`.S` files)
+    - Add comments explaining register usage
+    - Preserve caller-saved registers
+    - Document calling conventions
+
+    ```asm
+    # Context switch: switch from old to new task
+    # Args: %rdi = old_task, %rsi = new_task
+    .global context_switch
+    context_switch:
+        # Save old task state
+        push %rbp
+        push %rbx
+        # ... (implementation)
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Security Considerations
+
+<Warning>
+All security-sensitive code requires extra scrutiny:
+</Warning>
+
+- Memory safety checks
+- Integer overflow protection
+- Capability permission validation
+- Input sanitization
+- Proper error handling
+
+```c
+// Bad: No overflow check
+void* allocate(size_t count, size_t size) {
+    return kmalloc(count * size);
+}
+
+// Good: Check for overflow
+void* allocate(size_t count, size_t size) {
+    if (count > SIZE_MAX / size) {
+        return NULL;  // Overflow
+    }
+    return kmalloc(count * size);
+}
+```
+
+---
+
+## Reporting Issues
+
+### Bug Reports
+
+When reporting bugs, include:
+
+1. **Description** - Clear summary of the issue
+2. **Steps to Reproduce** - Detailed reproduction steps
+3. **Expected Behavior** - What should happen
+4. **Actual Behavior** - What actually happens
+5. **Environment** - OS, architecture, versions
+6. **Logs** - Relevant error messages or logs
+
+<CodeGroup>
+  ```bash Collect System Info
+  # Gather version information
+  uname -a
+  gcc --version
+  rustc --version
+  
+  # Get build logs
+  make clean
+  make build 2>&1 | tee build.log
+  ```
+
+  ```bash Capture QEMU Output
+  # Run with serial logging
+  make run 2>&1 | tee qemu-output.log
+  ```
+</CodeGroup>
+
+### Feature Requests
+
+For feature requests, explain:
+
+1. **Use Case** - Why is this feature needed?
+2. **Proposed Solution** - How should it work?
+3. **Alternatives** - What alternatives exist?
+4. **Implementation Ideas** - Any thoughts on implementation?
+
+---
+
+## Code of Conduct
+
+Aurora OS follows a code of conduct to ensure a welcoming community.
+
+Key principles:
+- Be respectful and inclusive
+- Focus on constructive feedback
+- Assume good intentions
+- Help newcomers get started
+
+<Info>
+Read the full Code of Conduct at `CODE_OF_CONDUCT.md` in the repository.
+</Info>
+
+---
+
+## Getting Help
+
+If you need help contributing:
+
+<CardGroup cols={2}>
+  <Card title="GitHub Discussions" icon="comments">
+    Ask questions and discuss ideas
+  </Card>
+  <Card title="GitHub Issues" icon="bug">
+    Report bugs and request features
+  </Card>
+  <Card title="Development Setup" icon="wrench" href="./setup">
+    Environment setup guide
+  </Card>
+  <Card title="Testing Guide" icon="vial" href="./testing">
+    Learn how to test your changes
+  </Card>
+</CardGroup>
+
+---
+
+## License
+
+By contributing to Aurora OS, you agree that your contributions will be licensed under the same license as the project.
+
+<Tip>
+First-time contributors: Look for issues labeled `good-first-issue` to get started!
+</Tip>

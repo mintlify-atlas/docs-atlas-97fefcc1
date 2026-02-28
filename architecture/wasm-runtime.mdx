@@ -1,0 +1,535 @@
+---
+title: WASM runtime
+description: WebAssembly integration and browser API bridge for Aurora OS
+---
+
+Aurora OS uses WebAssembly (WASM) to run compiled kernel modules in the browser, bridging native C code with browser JavaScript APIs. This enables code reuse between native and browser targets while maintaining performance and security.
+
+## Design decision
+
+Aurora OS chose **Option B: WASM-based virtual OS runtime** over compiling the entire kernel to WASM.
+
+### Options evaluated
+
+<Tabs>
+  <Tab title="Option A: Compile kernel → WASM">
+    **Approach**: Use Emscripten to compile the entire native kernel to WebAssembly
+
+    **Pros**:
+    - Maximum code reuse (single codebase)
+    - Automatic C → WASM translation
+    - Familiar development workflow
+
+    **Cons**:
+    - Hardware-dependent code can't compile to WASM (inline assembly, direct I/O)
+    - Complex build system (multiple toolchains)
+    - Large WASM binary size (~10+ MB)
+    - Poor integration with browser APIs (requires JS shims)
+
+    **Reference**: [Emscripten — Porting Guide](https://emscripten.org/docs/porting/index.html)
+  </Tab>
+  <Tab title="Option B: WASM runtime (chosen)">
+    **Approach**: Implement OS runtime in JavaScript (BPE/U), compile pure computation modules to WASM
+
+    **Pros**:
+    - Clean separation: hardware code stays native, computation compiles to WASM
+    - Native browser API integration (OPFS, WebCrypto, WebSocket)
+    - Better performance (no WASM ↔ JS boundary overhead for frequent calls)
+    - Smaller binary size (~2 MB total)
+
+    **Cons**:
+    - Separate implementation for browser (potential code drift)
+    - Duplicate logic in BPE/U (scheduler, memory manager)
+
+    **Reference**: [WASI Specification](https://wasi.dev), [Bytecode Alliance — wasmtime](https://wasmtime.dev)
+  </Tab>
+</Tabs>
+
+### Rationale
+
+Option B provides cleaner architecture:
+
+1. **Pure computation** (scheduler logic, policy engines, agent decision code) compiles to WASM
+2. **Hardware-dependent code** (interrupt handlers, page table manipulation) stays native-only
+3. **Browser APIs** (DOM, IndexedDB, WebSocket) used directly via JavaScript
+
+This approach eliminates the impedance mismatch of forcing hardware-dependent C code through WASM.
+
+Documentation: `docs/wasm-runtime.md` in source repository
+
+## Architecture
+
+The WASM runtime consists of three layers:
+
+```
+┌──────────────────────────────────────────────────┐
+│         Desktop UI (os.js, enhanced-apps.js)      │
+│         DOM, CSS animations, event handlers       │
+├──────────────────────────────────────────────────┤
+│         BPE/U Engine (bpe/*.js)                   │
+│         Syscalls, scheduler, memory, VFS, auth    │
+├──────────────────────────────────────────────────┤
+│         WASM Modules (kernel-wasm.c → .wasm)      │
+│         Compiled pure computation functions       │
+├──────────────────────────────────────────────────┤
+│         Browser APIs (OPFS, WebCrypto, WS)        │
+└──────────────────────────────────────────────────┘
+```
+
+## WASM compilation
+
+Aurora OS uses Emscripten to compile C kernel modules to WebAssembly:
+
+### Build process
+
+```bash
+# From Makefile:112
+make wasm:
+    emcc wasm-runtime/bridge/kernel-wasm.c \
+        -o wasm-runtime/pwa/kernel.js \
+        -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","UTF8ToString"]' \
+        -s ALLOW_MEMORY_GROWTH=1 \
+        -s INITIAL_MEMORY=16777216 \
+        -s MODULARIZE=1 \
+        -s EXPORT_NAME='AuroraKernel' \
+        -s ENVIRONMENT='web' \
+        -s NO_EXIT_RUNTIME=1 \
+        -s FILESYSTEM=0 \
+        -O2
+```
+
+**Compiler flags**:
+- `EXPORTED_RUNTIME_METHODS`: Expose `ccall`, `cwrap` for JS ↔ WASM calls
+- `ALLOW_MEMORY_GROWTH`: Enable dynamic memory expansion
+- `INITIAL_MEMORY=16777216`: Start with 16 MB (grows as needed)
+- `MODULARIZE=1`: Export as ES module
+- `EXPORT_NAME='AuroraKernel'`: Module name for import
+- `ENVIRONMENT='web'`: Target browser environment
+- `NO_EXIT_RUNTIME=1`: Keep WASM module alive
+- `FILESYSTEM=0`: Disable Emscripten's virtual FS (use BPE/U VFS instead)
+- `-O2`: Optimize for size and speed
+
+**Output**:
+- `kernel.js` — JavaScript loader and glue code (~50 KB)
+- `kernel.wasm` — Compiled WebAssembly binary (~200 KB)
+
+Implementation: `Makefile:112-120`, `wasm-runtime/bridge/kernel-wasm.c`
+
+### WASM module interface
+
+```c
+// wasm-runtime/bridge/kernel-wasm.c:15
+#include <emscripten.h>
+
+// Exported functions (callable from JavaScript)
+EMSCRIPTEN_KEEPALIVE
+int wasm_schedule(int pid, int priority) {
+    // Scheduler decision logic (pure computation)
+    // No hardware access, no syscalls
+    return next_pid;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void wasm_policy_eval(const char *rule, int *result) {
+    // Security policy evaluation
+    // Capability token validation
+    *result = evaluate_rule(rule);
+}
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_agent_exec(const char *code, int sandbox_level) {
+    // Agent runtime execution
+    // Sandboxed environment, no I/O
+    return exec_sandboxed(code, sandbox_level);
+}
+```
+
+**Usage from JavaScript**:
+
+```javascript
+// Load WASM module
+import AuroraKernel from './kernel.js';
+
+const kernel = await AuroraKernel();
+
+// Call WASM functions
+const nextPID = kernel.ccall(
+    'wasm_schedule',      // Function name
+    'number',             // Return type
+    ['number', 'number'], // Argument types
+    [currentPID, priority] // Arguments
+);
+
+// Or use cwrap for repeated calls
+const schedule = kernel.cwrap('wasm_schedule', 'number', ['number', 'number']);
+const nextPID = schedule(currentPID, priority);
+```
+
+Implementation: `wasm-runtime/bridge/kernel-wasm.c`
+
+## Browser API integration
+
+The WASM runtime bridges browser APIs to OS subsystems:
+
+<AccordionGroup>
+  <Accordion title="OPFS — Origin Private File System">
+    **Purpose**: Persistent file storage that survives cache clear
+
+    ```javascript
+    // wasm-runtime/pwa/bpe/bpe-vfs.js:30
+    class BPEVFS {
+        async init() {
+            // Get OPFS root directory
+            this.opfsRoot = await navigator.storage.getDirectory();
+            
+            // Request persistent storage
+            if (navigator.storage.persist) {
+                const granted = await navigator.storage.persist();
+                if (granted) console.log('OPFS persistence granted');
+            }
+        }
+
+        async readFile(path) {
+            const parts = path.split('/').filter(p => p);
+            let dir = this.opfsRoot;
+            
+            // Navigate to parent directory
+            for (let i = 0; i < parts.length - 1; i++) {
+                dir = await dir.getDirectoryHandle(parts[i]);
+            }
+            
+            // Get file handle
+            const fileHandle = await dir.getFileHandle(parts[parts.length - 1]);
+            const file = await fileHandle.getFile();
+            return await file.arrayBuffer();
+        }
+
+        async writeFile(path, data) {
+            const parts = path.split('/').filter(p => p);
+            let dir = this.opfsRoot;
+            
+            // Create parent directories
+            for (let i = 0; i < parts.length - 1; i++) {
+                dir = await dir.getDirectoryHandle(parts[i], { create: true });
+            }
+            
+            // Create or open file
+            const fileHandle = await dir.getFileHandle(
+                parts[parts.length - 1], 
+                { create: true }
+            );
+            
+            const writable = await fileHandle.createWritable();
+            await writable.write(data);
+            await writable.close();
+        }
+    }
+    ```
+
+    **Benefits**:
+    - Not cleared by "Clear browsing data" (only "All data")
+    - Async I/O (non-blocking)
+    - Full POSIX-like API (read, write, mkdir, unlink)
+
+    Implementation: `wasm-runtime/pwa/bpe/bpe-vfs.js`, `persistent-fs.js`
+  </Accordion>
+  <Accordion title="WebCrypto — Cryptography API">
+    **Purpose**: Password hashing, encryption, secure random numbers
+
+    ```javascript
+    // wasm-runtime/pwa/bpe/bpe-auth.js:40
+    async hashPassword(password, salt) {
+        const enc = new TextEncoder();
+        
+        // Import password as key material
+        const keyMaterial = await crypto.subtle.importKey(
+            'raw',
+            enc.encode(password),
+            'PBKDF2',
+            false,
+            ['deriveBits']
+        );
+        
+        // Derive key with PBKDF2
+        const bits = await crypto.subtle.deriveBits(
+            {
+                name: 'PBKDF2',
+                salt: salt,
+                iterations: 600000,  // OWASP 2023 recommendation
+                hash: 'SHA-256'
+            },
+            keyMaterial,
+            256  // 256-bit output
+        );
+        
+        return new Uint8Array(bits);
+    }
+
+    async encryptData(data, key) {
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        
+        const encrypted = await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv },
+            key,
+            new TextEncoder().encode(data)
+        );
+        
+        return { encrypted, iv };
+    }
+    ```
+
+    **Algorithms used**:
+    - PBKDF2-SHA256 (600k iterations) for password hashing
+    - AES-GCM for credential encryption
+    - Secure random number generation for salts, IVs, tokens
+
+    Implementation: `wasm-runtime/pwa/bpe/bpe-auth.js`
+  </Accordion>
+  <Accordion title="WebSocket — Network API">
+    **Purpose**: TCP-like socket communication
+
+    ```javascript
+    // wasm-runtime/pwa/bpe/bpe-network.js:20
+    class BPENetwork {
+        async connect(host, port) {
+            return new Promise((resolve, reject) => {
+                this.ws = new WebSocket(`wss://${host}:${port}`);
+                
+                this.ws.onopen = () => {
+                    this.connected = true;
+                    resolve(0);  // Success
+                };
+                
+                this.ws.onerror = (err) => {
+                    reject(-1);  // Connection failed
+                };
+                
+                this.ws.onmessage = (event) => {
+                    this.receiveQueue.push(event.data);
+                };
+            });
+        }
+
+        async send(data) {
+            if (!this.connected) return -1;
+            this.ws.send(data);
+            return data.byteLength;
+        }
+
+        async recv(maxLen) {
+            while (this.receiveQueue.length === 0) {
+                await new Promise(r => setTimeout(r, 10));  // Poll
+            }
+            return this.receiveQueue.shift();
+        }
+    }
+    ```
+
+    **Limitations**:
+    - WebSocket only (no raw TCP/UDP)
+    - Requires proxy server for non-WebSocket protocols
+    - HTTPS/WSS required (no HTTP/WS in production)
+
+    Implementation: `wasm-runtime/pwa/bpe/bpe-network.js`
+  </Accordion>
+  <Accordion title="IndexedDB — Structured storage">
+    **Purpose**: Fallback storage for large structured data
+
+    ```javascript
+    // wasm-runtime/pwa/persistent-fs.js:80
+    class IndexedDBStorage {
+        async init() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open('AuroraOS', 1);
+                
+                req.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains('files')) {
+                        db.createObjectStore('files', { keyPath: 'path' });
+                    }
+                };
+                
+                req.onsuccess = (e) => {
+                    this.db = e.target.result;
+                    resolve();
+                };
+                
+                req.onerror = reject;
+            });
+        }
+
+        async writeFile(path, data) {
+            const tx = this.db.transaction(['files'], 'readwrite');
+            const store = tx.objectStore('files');
+            await store.put({ path, data, timestamp: Date.now() });
+        }
+
+        async readFile(path) {
+            const tx = this.db.transaction(['files'], 'readonly');
+            const store = tx.objectStore('files');
+            const result = await store.get(path);
+            return result ? result.data : null;
+        }
+    }
+    ```
+
+    **Use cases**:
+    - Large file storage (OPFS has size limits in some browsers)
+    - Database-like queries (key-value, indexes)
+    - Fallback when OPFS unavailable
+
+    Implementation: `wasm-runtime/pwa/persistent-fs.js`
+  </Accordion>
+</AccordionGroup>
+
+## Progressive Web App
+
+Aurora OS is a PWA (Progressive Web App) with offline support:
+
+### Service worker
+
+```javascript
+// wasm-runtime/pwa/sw.js:10
+const CACHE_NAME = 'aurora-os-v1';
+const urlsToCache = [
+    '/',
+    '/index.html',
+    '/os.css',
+    '/os.js',
+    '/kernel.js',
+    '/kernel.wasm',
+    // ... all assets
+];
+
+self.addEventListener('install', (event) => {
+    event.waitUntil(
+        caches.open(CACHE_NAME).then((cache) => {
+            return cache.addAll(urlsToCache);
+        })
+    );
+});
+
+self.addEventListener('fetch', (event) => {
+    event.respondWith(
+        caches.match(event.request).then((response) => {
+            // Return cached version or fetch from network
+            return response || fetch(event.request);
+        })
+    );
+});
+```
+
+### Manifest
+
+```json
+// wasm-runtime/pwa/manifest.json
+{
+    "name": "Aurora OS",
+    "short_name": "Aurora",
+    "description": "A reactive, agentic OS with modern polish",
+    "start_url": "/index.html",
+    "display": "fullscreen",
+    "theme_color": "#0066ff",
+    "background_color": "#0b0f14",
+    "icons": [
+        {
+            "src": "/icon-192.svg",
+            "sizes": "192x192",
+            "type": "image/svg+xml"
+        },
+        {
+            "src": "/icon-512.svg",
+            "sizes": "512x512",
+            "type": "image/svg+xml"
+        }
+    ]
+}
+```
+
+**PWA features**:
+- Offline mode (service worker caches all assets)
+- Install to desktop/home screen
+- Fullscreen mode (no browser UI)
+- App-like experience
+
+Implementation: `wasm-runtime/pwa/sw.js`, `manifest.json`
+
+## Performance optimization
+
+### WASM compilation flags
+
+Emscripten optimization levels:
+
+| Flag | Size | Speed | Notes |
+|------|------|-------|-------|
+| `-O0` | 800 KB | 1.0× | Debug (no optimization) |
+| `-O1` | 500 KB | 1.5× | Basic optimizations |
+| `-O2` | 200 KB | 2.5× | **Default** (size + speed) |
+| `-O3` | 180 KB | 3.0× | Aggressive (slower compile) |
+| `-Os` | 150 KB | 2.0× | Size-focused |
+| `-Oz` | 120 KB | 1.8× | Extreme size (slower) |
+
+Aurora OS uses `-O2` for balanced size and performance.
+
+### Memory growth strategy
+
+```javascript
+// Emscripten memory management
+-s INITIAL_MEMORY=16777216   // Start with 16 MB
+-s ALLOW_MEMORY_GROWTH=1     // Grow dynamically
+-s MAXIMUM_MEMORY=536870912  // Cap at 512 MB
+```
+
+**Growth pattern**:
+- Initial: 16 MB (sufficient for boot)
+- Typical: 32-64 MB (desktop with apps)
+- Maximum: 512 MB (prevents runaway allocation)
+
+### Async I/O
+
+All browser APIs use async I/O to prevent blocking:
+
+```javascript
+// Synchronous API (blocks UI thread) ❌
+const data = fs.readFileSync('/path/to/file');
+
+// Asynchronous API (non-blocking) ✅
+const data = await fs.readFile('/path/to/file');
+```
+
+BPE/U wraps all I/O in async functions to maintain 60 fps UI.
+
+## Limitations
+
+<Warning>
+  The browser runtime has limitations compared to native:
+</Warning>
+
+| Feature | Native | Browser | Notes |
+|---------|--------|---------|-------|
+| Direct hardware access | ✅ | ❌ | No raw I/O, DMA, interrupts |
+| Syscall performance | ~100 ns | ~50 μs | JS function call overhead |
+| Memory access | Direct | Virtualized | WASM linear memory only |
+| Networking | Raw TCP/UDP | WebSocket | Requires proxy for raw sockets |
+| File system | Ext2/FAT32 | OPFS/IDB | Browser-specific APIs |
+| Process isolation | Hardware MMU | WASM sandbox | Weaker isolation |
+| Real-time | Possible | No | JavaScript event loop unpredictable |
+
+See `docs/browser-limitations.md` for details.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="BPE/U engine" icon="microchip" href="/architecture/bpe-engine">
+    Explore the browser processing engine
+  </Card>
+  <Card title="Hybrid design" icon="layer-group" href="/architecture/hybrid-design">
+    Learn how native and browser code share logic
+  </Card>
+  <Card title="Quick start" icon="rocket" href="/quickstart">
+    Run Aurora OS in your browser
+  </Card>
+  <Card title="Building" icon="hammer" href="/development/building">
+    Build WASM modules from source
+  </Card>
+</CardGroup>

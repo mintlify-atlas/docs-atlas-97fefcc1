@@ -1,0 +1,461 @@
+---
+title: Inter-Process Communication
+description: System calls for message passing, shared memory, and pipes
+---
+
+## Message Passing
+
+Aurora OS implements blocking message queues for process-to-process communication.
+
+### SYS_MSGSND
+
+Send a message to another process.
+
+**Syscall Number:** 19
+
+#### Parameters
+
+<ParamField path="target_pid" type="int" required>
+  PID of the receiving process
+</ParamField>
+
+<ParamField path="data" type="const void*" required>
+  Pointer to message payload
+</ParamField>
+
+<ParamField path="len" type="size_t" required>
+  Length of message in bytes (max 256)
+</ParamField>
+
+#### Returns
+
+<ResponseField name="return" type="int">
+  - On success: 0
+  - On error: -1 (invalid PID, process not found, or message too large)
+</ResponseField>
+
+#### Behavior
+
+<Info>
+  If the target process's message queue is full (32 messages), the sender blocks until space becomes available.
+</Info>
+
+1. Validates target PID and message length (≤ 256 bytes)
+2. Creates an `ipc_message` structure:
+   - Sets `sender_pid` to current process
+   - Sets `receiver_pid` to target
+   - Copies message data
+3. Attempts to enqueue the message
+4. If queue full, blocks sender and reschedules
+5. Wakes receiver if it was blocked in `msgrcv`
+
+#### Message Structure
+
+```c
+struct ipc_message {
+    int sender_pid;
+    int receiver_pid;
+    uint64_t cap_token;      // Reserved for capability-based access control
+    size_t len;
+    uint8_t data[MSG_MAX_SIZE];  // 256 bytes
+};
+```
+
+#### Example
+
+<CodeGroup>
+```c C - Send Message
+const char *msg = "Hello from sender";
+int ret = msgsnd_syscall(target_pid, msg, strlen(msg) + 1);
+if (ret == 0) {
+    // Message sent successfully
+}
+```
+
+```c C - Broadcast to All Processes
+for (int pid = 0; pid < PROC_MAX; pid++) {
+    if (pid != getpid_syscall()) {
+        msgsnd_syscall(pid, "Shutdown", 9);
+    }
+}
+```
+</CodeGroup>
+
+---
+
+### SYS_MSGRCV
+
+Receive a message from the process's message queue.
+
+**Syscall Number:** 20
+
+#### Parameters
+
+<ParamField path="buf" type="void*" required>
+  Buffer to store received message data
+</ParamField>
+
+<ParamField path="max_len" type="size_t" required>
+  Maximum number of bytes to copy (buffer size)
+</ParamField>
+
+#### Returns
+
+<ResponseField name="return" type="int">
+  - On success: number of bytes copied to buffer
+  - On error: -1
+</ResponseField>
+
+#### Behavior
+
+<Info>
+  If the message queue is empty, the caller blocks until a message arrives.
+</Info>
+
+1. Checks the process's message queue
+2. If empty, blocks the process and reschedules
+3. Dequeues the oldest message (FIFO order)
+4. Copies `min(msg.len, max_len)` bytes to user buffer
+5. Returns the number of bytes copied
+
+#### Example
+
+<CodeGroup>
+```c C - Receive Message
+char buffer[256];
+int len = msgrcv_syscall(buffer, sizeof(buffer));
+if (len > 0) {
+    printf("Received %d bytes: %s\n", len, buffer);
+}
+```
+
+```c C - Message Loop
+while (1) {
+    char buf[256];
+    int n = msgrcv_syscall(buf, sizeof(buf));
+    if (n > 0) {
+        handle_message(buf, n);
+    }
+}
+```
+</CodeGroup>
+
+#### Queue Limits
+
+<Warning>
+  Each process has a fixed-size queue of 32 messages. If a sender tries to send when the queue is full, it will block.
+</Warning>
+
+```c
+#define MSG_MAX_SIZE 256      // Max message payload
+#define MSG_QUEUE_SIZE 32     // Messages per process
+```
+
+---
+
+## Shared Memory
+
+Shared memory allows multiple processes to access the same physical memory region.
+
+### SYS_SHMGET
+
+Create a shared memory segment.
+
+**Syscall Number:** 21
+
+#### Parameters
+
+<ParamField path="size" type="size_t" required>
+  Size of the shared memory segment in bytes (rounded up to pages)
+</ParamField>
+
+#### Returns
+
+<ResponseField name="return" type="int">
+  - On success: shared memory ID (positive integer)
+  - On error: -1 (no free slots or allocation failure)
+</ResponseField>
+
+#### Behavior
+
+1. Rounds size up to page boundaries (4096-byte multiples)
+2. Allocates physical pages (simplified: may not be contiguous)
+3. Creates a `shm_region` structure:
+   - Assigns a unique ID
+   - Records physical base address and size
+   - Initializes refcount to 0
+4. Returns the shared memory ID
+
+#### Limits
+
+<Info>
+  Aurora OS supports up to 16 concurrent shared memory segments system-wide.
+</Info>
+
+```c
+#define SHM_MAX 16
+```
+
+#### Example
+
+```c
+int shm_id = shmget_syscall(8192);  // Create 8 KB segment
+if (shm_id >= 0) {
+    // Use shm_id with shmat
+}
+```
+
+---
+
+### SYS_SHMAT
+
+Attach a shared memory segment to the process's address space.
+
+**Syscall Number:** 22
+
+#### Parameters
+
+<ParamField path="shm_id" type="int" required>
+  Shared memory ID returned by shmget
+</ParamField>
+
+<ParamField path="hint_addr" type="uint64_t">
+  Suggested virtual address. If 0, kernel chooses the address automatically.
+</ParamField>
+
+#### Returns
+
+<ResponseField name="return" type="uint64_t">
+  - On success: virtual address where segment is mapped
+  - On error: -1 (invalid ID)
+</ResponseField>
+
+#### Behavior
+
+1. Finds the shared memory region by ID
+2. Chooses virtual address:
+   - If `hint_addr == 0`: Uses `0x60000000 + shm_id * 0x100000`
+   - Otherwise: Uses `hint_addr`
+3. Maps all pages of the segment with `PAGE_WRITABLE | PAGE_USER`
+4. Increments the segment's reference count
+5. Returns the virtual address
+
+#### Example
+
+<CodeGroup>
+```c C - Producer Process
+int shm_id = shmget_syscall(4096);
+void *ptr = (void *)shmat_syscall(shm_id, 0);
+if (ptr != (void *)-1) {
+    strcpy(ptr, "Shared data");
+    shmdt_syscall((uint64_t)ptr, shm_id);
+}
+```
+
+```c C - Consumer Process
+// shm_id obtained from producer (e.g., via message passing)
+void *ptr = (void *)shmat_syscall(shm_id, 0);
+if (ptr != (void *)-1) {
+    printf("Data: %s\n", (char *)ptr);
+    shmdt_syscall((uint64_t)ptr, shm_id);
+}
+```
+</CodeGroup>
+
+---
+
+### SYS_SHMDT
+
+Detach a shared memory segment from the process's address space.
+
+**Syscall Number:** 23
+
+#### Parameters
+
+<ParamField path="addr" type="uint64_t" required>
+  Virtual address where the segment is mapped
+</ParamField>
+
+<ParamField path="shm_id" type="int" required>
+  Shared memory ID
+</ParamField>
+
+#### Returns
+
+<ResponseField name="return" type="int">
+  - On success: 0
+  - On error: -1 (invalid ID)
+</ResponseField>
+
+#### Behavior
+
+1. Finds the shared memory region by ID
+2. Unmaps all pages from the virtual address
+3. Decrements the reference count
+4. **If refcount reaches 0**: Frees all physical pages and marks the segment as unused
+
+<Warning>
+  When the last process detaches from a shared memory segment, the kernel automatically frees the physical memory.
+</Warning>
+
+#### Example
+
+```c
+void *ptr = (void *)shmat_syscall(shm_id, 0);
+// Use shared memory...
+shmdt_syscall((uint64_t)ptr, shm_id);
+```
+
+---
+
+## Pipes
+
+Pipes provide unidirectional byte streams between processes, typically used for parent-child communication.
+
+### SYS_PIPE
+
+Create a pipe and return two file descriptors.
+
+**Syscall Number:** 15
+
+#### Parameters
+
+<ParamField path="pipefd" type="int[2]" required>
+  Array to store the two file descriptors:
+  - `pipefd[0]`: read end
+  - `pipefd[1]`: write end
+</ParamField>
+
+#### Returns
+
+<ResponseField name="return" type="int">
+  - On success: 0 (pipefd array is filled)
+  - On error: -1 (no free pipe slots or fd slots)
+</ResponseField>
+
+#### Behavior
+
+1. Allocates a `struct pipe` with a 4096-byte circular buffer
+2. Finds two free file descriptors in the current process
+3. Sets up the descriptors:
+   - Read end: `flags = 0`, `fs_priv = pipe pointer`
+   - Write end: `flags = 1`, `fs_priv = pipe pointer`
+4. Returns 0 with `pipefd[0]` and `pipefd[1]` set
+
+#### Pipe Structure
+
+```c
+#define PIPE_BUF_SIZE 4096
+
+struct pipe {
+    uint8_t buf[PIPE_BUF_SIZE];
+    int read_pos, write_pos, count;
+    int in_use;
+    int waiting_pid;    // PID blocked on read
+    int writer_pid;     // PID blocked on write, -1 if none
+};
+```
+
+#### Example
+
+<CodeGroup>
+```c C - Create Pipe and Fork
+int pipefd[2];
+if (pipe_syscall(pipefd) == 0) {
+    int pid = fork_syscall();
+    if (pid == 0) {
+        // Child: close write end, read from pipe
+        close_syscall(pipefd[1]);
+        char buf[256];
+        int n = read_syscall(pipefd[0], buf, sizeof(buf));
+        // Process data...
+        exit_syscall(0);
+    } else {
+        // Parent: close read end, write to pipe
+        close_syscall(pipefd[0]);
+        write_syscall(pipefd[1], "Hello", 5);
+        close_syscall(pipefd[1]);
+        waitpid_syscall(pid, NULL);
+    }
+}
+```
+</CodeGroup>
+
+---
+
+### SYS_DUP2
+
+Duplicate a file descriptor to a specific fd number.
+
+**Syscall Number:** 16
+
+#### Parameters
+
+<ParamField path="oldfd" type="int" required>
+  Existing file descriptor to duplicate
+</ParamField>
+
+<ParamField path="newfd" type="int" required>
+  Target file descriptor number
+</ParamField>
+
+#### Returns
+
+<ResponseField name="return" type="int">
+  - On success: newfd
+  - On error: -1 (invalid fd)
+</ResponseField>
+
+#### Behavior
+
+1. Validates that `oldfd` is in use
+2. If `newfd` is already in use and differs from `oldfd`, closes it
+3. Copies the entire `fd_entry` from `oldfd` to `newfd`
+4. Returns `newfd`
+
+<Note>
+  This is commonly used for I/O redirection, such as redirecting stdout to a pipe or file.
+</Note>
+
+#### Example - Redirect stdout to Pipe
+
+```c
+int pipefd[2];
+pipe_syscall(pipefd);
+
+int pid = fork_syscall();
+if (pid == 0) {
+    // Child: redirect stdout to pipe write end
+    close_syscall(pipefd[0]);  // Close read end
+    dup2_syscall(pipefd[1], 1);  // stdout = pipe write
+    close_syscall(pipefd[1]);  // Close original fd
+    
+    // Now all writes to fd 1 go to the pipe
+    write_syscall(1, "Piped output\n", 14);
+    exit_syscall(0);
+} else {
+    // Parent: read from pipe
+    close_syscall(pipefd[1]);
+    char buf[256];
+    read_syscall(pipefd[0], buf, sizeof(buf));
+    close_syscall(pipefd[0]);
+}
+```
+
+---
+
+## Comparison of IPC Mechanisms
+
+| Mechanism | Use Case | Capacity | Blocking | Persistence |
+|-----------|----------|----------|----------|-------------|
+| **Messages** | Command/control messages | 32 msgs × 256 bytes | Yes | Queue per process |
+| **Shared Memory** | Large data transfer | Up to page multiples | No | Refcounted |
+| **Pipes** | Streaming data | 4096 bytes | Yes | Lifetime of pipe |
+
+### Recommendations
+
+<Info>
+  - Use **messages** for simple RPC-style communication and event notifications
+  - Use **shared memory** for high-bandwidth data sharing (e.g., video frames, large buffers)
+  - Use **pipes** for traditional Unix-style process pipelines and I/O redirection
+</Info>

@@ -1,0 +1,301 @@
+---
+title: Memory Management
+description: System calls for virtual memory allocation and management
+---
+
+## SYS_MMAP
+
+Map a region of virtual memory into the process address space.
+
+**Syscall Number:** 13
+
+### Parameters
+
+<ParamField path="addr" type="uint64_t">
+  Suggested virtual address for the mapping. If 0, the kernel chooses the address.
+</ParamField>
+
+<ParamField path="len" type="uint64_t" required>
+  Length of the mapping in bytes (rounded up to page size)
+</ParamField>
+
+<ParamField path="prot" type="uint64_t">
+  Memory protection flags (currently unused; all mappings are writable)
+</ParamField>
+
+<ParamField path="flags" type="uint64_t">
+  Mapping flags (currently unused)
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="uint64_t">
+  - On success: virtual address of the mapped region
+  - On error: -1 (invalid length, no address space, or allocation failure)
+</ResponseField>
+
+### Behavior
+
+1. **Length alignment**: Rounds `len` up to the nearest page boundary (4096 bytes)
+2. **Address selection**:
+   - If `addr == 0`: Uses `procs[current_pid].mmap_next` and increments it
+   - If `addr != 0`: Uses the provided address (fixed mapping)
+3. **Page allocation**: Allocates physical frames for each page in the range
+4. **Mapping**: Maps each page with `PAGE_WRITABLE | PAGE_USER` flags
+
+### Memory Layout
+
+<Info>
+  User mmap region spans from `0x40000000` to `0x7FFF0000`. Each successful mmap advances `mmap_next` by `len` bytes.
+</Info>
+
+```
+0x7FFFFFFF  ┌──────────────┐
+            │  User Stack  │
+0x7FFF0000  ├──────────────┤
+            │              │
+            │  Mmap Region │  ← Grows upward from 0x40000000
+            │              │
+0x40000000  ├──────────────┤
+            │  Heap (brk)  │
+0x10000000  ├──────────────┤
+            │  Code & Data │
+0x00400000  └──────────────┘
+```
+
+### Implementation
+
+```c
+uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags) {
+    if (len == 0) return (uint64_t)-1;
+    
+    // Page-align length
+    len = (len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    
+    // Choose address
+    uint64_t va = addr;
+    if (va == 0 && current_pid >= 0) {
+        va = procs[current_pid].mmap_next;
+        procs[current_pid].mmap_next += len;
+        if (procs[current_pid].mmap_next > USER_MMAP_END) return (uint64_t)-1;
+    }
+    
+    // Allocate and map pages
+    for (uint64_t off = 0; off < len; off += PAGE_SIZE) {
+        void *frame = phys_alloc();
+        if (!frame) return (uint64_t)-1;
+        paging_map_in(p->pml4_phys, va + off, (uint64_t)frame,
+                      PAGE_WRITABLE | PAGE_USER);
+    }
+    
+    return va;
+}
+```
+
+### Example
+
+<CodeGroup>
+```c C - Anonymous Mapping
+// Allocate 8 KB of anonymous memory
+void *ptr = (void *)mmap_syscall(0, 8192, 0, 0);
+if (ptr != (void *)-1) {
+    // Use the memory
+    memset(ptr, 0, 8192);
+    
+    // Release when done
+    munmap_syscall((uint64_t)ptr, 8192);
+}
+```
+
+```c C - Fixed Address
+// Map at a specific address
+void *ptr = (void *)mmap_syscall(0x50000000, 4096, 0, 0);
+```
+</CodeGroup>
+
+### Error Conditions
+
+<Warning>
+  If physical memory allocation fails mid-mapping, the function returns -1 but does not unmap already-mapped pages (memory leak in current implementation).
+</Warning>
+
+---
+
+## SYS_MUNMAP
+
+Unmap a region of virtual memory and free associated physical pages.
+
+**Syscall Number:** 14
+
+### Parameters
+
+<ParamField path="addr" type="uint64_t" required>
+  Virtual address of the region to unmap (must be page-aligned)
+</ParamField>
+
+<ParamField path="len" type="uint64_t" required>
+  Length of the region in bytes (rounded up to page size)
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - On success: 0
+  - On error: -1 (invalid address alignment or zero length)
+</ResponseField>
+
+### Behavior
+
+1. **Validation**: Checks that `addr` is page-aligned and `len > 0`
+2. **Length alignment**: Rounds `len` up to the nearest page boundary
+3. **Unmapping loop**: For each page in the range:
+   - Translates virtual address to physical address
+   - Frees the physical frame via `phys_free()`
+   - Unmaps the page from the page table
+
+### Implementation
+
+```c
+int sys_munmap(uint64_t addr, uint64_t len) {
+    if (len == 0 || (addr & (PAGE_SIZE - 1))) return -1;
+    len = (len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    
+    for (uint64_t off = 0; off < len; off += PAGE_SIZE) {
+        uint64_t phys_addr = paging_virt_to_phys(addr + off);
+        if (phys_addr) phys_free((void *)phys_addr);
+        paging_unmap(addr + off);
+    }
+    return 0;
+}
+```
+
+### Example
+
+```c
+void *ptr = (void *)mmap_syscall(0, 16384, 0, 0);
+// Use memory...
+munmap_syscall((uint64_t)ptr, 16384);
+```
+
+### Safety Notes
+
+<Warning>
+  Unmapping memory that is still in use by the process will cause page faults on subsequent access. Always ensure no pointers reference the unmapped region.
+</Warning>
+
+---
+
+## SYS_BRK
+
+Change the location of the program break (end of the data segment).
+
+**Syscall Number:** 31
+
+### Parameters
+
+<ParamField path="addr" type="uint64_t">
+  New break address. If 0, queries the current break without changing it.
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="uint64_t">
+  - On success: new break address
+  - On error or query: current break address
+</ResponseField>
+
+### Behavior
+
+<Info>
+  The data segment (heap) starts at `0x10000000` (USER_BRK_BASE). Each process has its own break tracked in `proc_brk[pid]`.
+</Info>
+
+#### Query Mode (addr == 0)
+
+Returns the current break without modification.
+
+#### Set Mode (addr > 0)
+
+1. **Validation**: Rejects addresses below `USER_BRK_BASE`
+2. **Growing heap**: If new break is higher than current:
+   - Allocates physical frames for new pages
+   - Maps them with `PAGE_WRITABLE | PAGE_USER` flags
+   - Updates `proc_brk[current_pid]`
+3. **Shrinking heap**: Returns current break without unmapping (current implementation doesn't shrink)
+
+### Implementation
+
+```c
+case SYS_BRK: {
+    uint64_t new_brk = arg1;
+    uint64_t cur = proc_brk[current_pid];
+    if (cur == 0) { cur = USER_BRK_BASE; proc_brk[current_pid] = cur; }
+    if (new_brk == 0) return cur;  // Query
+    if (new_brk < USER_BRK_BASE) return cur;  // Invalid
+    
+    // Map new pages if growing
+    uint64_t old_page = (cur + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    uint64_t new_page = (new_brk + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    for (uint64_t a = old_page; a < new_page; a += PAGE_SIZE) {
+        void *frame = phys_alloc();
+        if (!frame) return cur;  // Out of memory
+        paging_map_in(p->pml4_phys, a, (uint64_t)frame, 
+                      PAGE_WRITABLE | PAGE_USER);
+    }
+    proc_brk[current_pid] = new_brk;
+    return new_brk;
+}
+```
+
+### Example - Heap Allocator
+
+<CodeGroup>
+```c C - Query Current Break
+uint64_t current = brk_syscall(0);
+printf("Heap break at: 0x%lx\n", current);
+```
+
+```c C - Expand Heap
+// Allocate 4 KB on the heap
+uint64_t old_brk = brk_syscall(0);
+uint64_t new_brk = brk_syscall(old_brk + 4096);
+if (new_brk == old_brk + 4096) {
+    void *ptr = (void *)old_brk;
+    // Use ptr as heap memory
+}
+```
+
+```c C - Simple malloc Implementation
+void *simple_malloc(size_t size) {
+    uint64_t old = brk_syscall(0);
+    uint64_t new = brk_syscall(old + size);
+    return (new > old) ? (void *)old : NULL;
+}
+```
+</CodeGroup>
+
+### Memory Layout with brk
+
+```
+0x10000000  ┌──────────────┐  ← USER_BRK_BASE (initial break)
+            │              │
+            │     Heap     │  ← Grows upward via brk()
+            │              │
+   brk →    ├──────────────┤  ← Current break
+            │              │
+            │   Unmapped   │
+            │              │
+0x40000000  └──────────────┘  ← Start of mmap region
+```
+
+### Differences from POSIX
+
+<Note>
+  Unlike POSIX brk(), Aurora OS does not currently support shrinking the heap. Setting the break below the current value returns the current break unchanged.
+</Note>
+
+### Use Cases
+
+1. **User-space allocators**: `malloc()` implementations typically use `brk()` for small allocations and `mmap()` for large ones
+2. **Garbage collectors**: GC systems can query the heap size and expand it as needed
+3. **Static allocators**: Simple bump allocators for applications without complex memory management

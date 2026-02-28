@@ -1,0 +1,620 @@
+---
+title: 'User Accounts & Authentication'
+description: 'Manage user accounts, passwords, and sessions in Aurora OS with persistent authentication'
+icon: 'user'
+---
+
+## Overview
+
+Aurora OS features a production-grade authentication system powered by the BPE/U (Browser Processing Engine/Unit) with persistent credential storage that survives browser cache clears.
+
+<Note>
+  User credentials are encrypted with AES-GCM and stored across OPFS, IndexedDB, and Service Worker cache for maximum durability
+</Note>
+
+## Authentication System
+
+The BPEAuth subsystem provides secure user authentication with modern cryptography.
+
+<CardGroup cols={2}>
+  <Card title="PBKDF2 Hashing" icon="lock">
+    600,000 iterations with SHA-256 and 32-byte salts
+  </Card>
+  <Card title="Multi-Tier Storage" icon="database">
+    OPFS → IndexedDB → Service Worker cache → localStorage
+  </Card>
+  <Card title="Rate Limiting" icon="shield-halved">
+    5 failed attempts trigger exponential lockout (30s, 60s, 120s...)
+  </Card>
+  <Card title="Session Management" icon="clock">
+    30-minute inactivity timeout with automatic lock screen
+  </Card>
+</CardGroup>
+
+## Boot Sequence
+
+Aurora OS boots through a realistic hardware-like sequence:
+
+### Phase 1: BIOS POST
+
+```
+AURORA BPE/U BIOS v1.0
+Copyright (c) 2026 AURORA Project
+
+BPE/U — Browser Processing Engine/Unit
+Processor: Virtual BPE CPU
+Cores: 8 @ 3200 MHz
+
+Testing memory... 8192 MB OK
+
+Detecting devices...
+  Display: 1920x1080 @ 60Hz
+  Input: Keyboard + Mouse
+  Storage: OPFS + IndexedDB
+  Network: WebSocket bridge
+  Clock: Browser API (accurate to 5µs)
+
+POST complete. All devices OK.
+
+Booting from /dev/opfs0...
+```
+
+### Phase 2: Bootloader
+
+```
+[boot] AURORA Bootloader v1.0
+[boot] Loading kernel image...
+[boot] Kernel WASM loaded (real C kernel → wasm32)
+[kernel] AURORA OS v0.1.0 (BPE/U 1.0)
+[kernel] Command line: root=/dev/opfs0 console=tty0 quiet
+[kernel] Initializing BPE core engine...
+```
+
+### Phase 3: Kernel Initialization
+
+<Tabs>
+  <Tab title="Memory Manager">
+    ```
+    [mm] Initializing memory manager...
+    [mm] Physical allocator: WASM bitmap (real C kernel code)
+    [mm] 2048 frames (8192 MB)
+    [mm] Heap allocator: WASM kmalloc (real C kernel code)
+    ```
+  </Tab>
+  <Tab title="Process Manager">
+    ```
+    [proc] Initializing process manager...
+    [proc] PID 0 (idle) created
+    [proc] PID 1 (init) created
+    [sched] Priority queue: WASM min-heap (real C kernel code)
+    ```
+  </Tab>
+  <Tab title="Filesystem">
+    ```
+    [vfs] Initializing virtual filesystem...
+    [vfs] Filesystem restored from OPFS
+    [vfs] Mount points: / /home /dev /proc /sys /tmp
+    ```
+  </Tab>
+  <Tab title="Authentication">
+    ```
+    [auth] Initializing credential store...
+    [auth] Credential store loaded (OPFS)
+    [security] MAC policy: WASM (real C kernel code)
+    [security] Capability tokens: WASM (real C kernel code)
+    ```
+  </Tab>
+</Tabs>
+
+### Phase 4: Init System
+
+```
+[init] Starting authentication daemon...
+[init] Starting network daemon...
+[init] Starting display server...
+[init] Starting input manager...
+[init] Starting filesystem sync daemon...
+[init] Starting agent runtime...
+[init] Starting GPU compositor...
+
+[init] Boot complete.
+```
+
+### Phase 5: Login or OOBE
+
+- **First Boot**: Out-of-Box Experience (OOBE) - Create first user
+- **Subsequent Boots**: Login screen with user selection
+
+<Tip>
+  The entire boot sequence takes approximately 2-3 seconds with authentic POST and kernel messages
+</Tip>
+
+## First-Time Setup (OOBE)
+
+When no users exist, Aurora OS launches the Out-of-Box Experience.
+
+### Setup Steps
+
+<Steps>
+  <Step title="Welcome Screen">
+    Introduction to Aurora OS with animated logo
+  </Step>
+  <Step title="Create Account">
+    - Enter username (1-32 alphanumeric characters and underscores)
+    - Choose display name (shown in UI)
+    - Select avatar from 20 emoji options
+    - Create password (minimum 4 characters, 8+ recommended)
+    - Confirm password
+  </Step>
+  <Step title="Timezone Setup">
+    - Auto-detected via `Intl.DateTimeFormat`
+    - Manual override available
+    - Confirm time display format
+  </Step>
+  <Step title="Appearance">
+    - Choose theme: Light, Dark, or System
+    - Select default wallpaper (11 options)
+    - Preview your choices
+  </Step>
+  <Step title="Complete Setup">
+    - User account created with UID 1000
+    - Home directory initialized: `/home/username`
+    - Entry added to `/etc/passwd`
+    - First user is automatically admin
+    - Boot to desktop
+  </Step>
+</Steps>
+
+### Avatar Options
+
+Choose from 20 colorful emoji avatars:
+
+<Accordion title="Available Avatars">
+  🦊 Fox • 🐼 Panda • 🦁 Lion • 🐯 Tiger • 🦄 Unicorn • 🐸 Frog •
+  🐙 Octopus • 🦋 Butterfly • 🐝 Bee • 🐧 Penguin • 🦉 Owl • 🦅 Eagle •
+  🐲 Dragon • 👽 Alien • 🤖 Robot • 🎨 Palette • 🎭 Theater • 🎪 Circus •
+  🚀 Rocket • ⚡ Lightning
+</Accordion>
+
+## Login Screen
+
+After setup, Aurora OS boots to the login screen.
+
+### Single User Mode
+
+When only one user exists:
+
+1. Clock and date display (real-time, timezone-aware)
+2. User avatar with display name
+3. Password input field
+4. "Show password" toggle button
+5. Sign-in button (→)
+6. Power buttons (Sleep, Restart, Shut Down)
+
+### Multi-User Mode
+
+When multiple users exist:
+
+1. Clock and date display
+2. User selection cards with:
+   - Avatar
+   - Display name
+   - Role (Administrator or User)
+3. Click a user to enter password
+4. "Switch User" button to go back
+5. Power buttons
+
+<Tip>
+  Press Enter after typing your password for quick login
+</Tip>
+
+## Security Features
+
+### Password Hashing
+
+Aurora OS uses industry-standard PBKDF2 with aggressive parameters:
+
+```javascript
+// Password hashing configuration
+PBKDF2_ITERATIONS = 600000     // OWASP recommended (2023)
+SALT_BYTES = 32                // 256-bit random salt
+HASH_ALGO = 'SHA-256'          // SHA-256 hash function
+
+// Process:
+// 1. Generate 32-byte random salt per user
+// 2. Derive 256-bit hash with 600k iterations
+// 3. Store hash and salt (never plaintext password)
+// 4. Constant-time comparison on login
+```
+
+### Rate Limiting
+
+Protection against brute-force attacks:
+
+<CardGroup cols={2}>
+  <Card title="5 Failed Attempts" icon="triangle-exclamation">
+    30-second lockout after 5 incorrect passwords
+  </Card>
+  <Card title="Exponential Backoff" icon="clock">
+    Lockout doubles: 30s → 60s → 120s → 240s...
+  </Card>
+  <Card title="Per-Session" icon="user">
+    Counters reset on successful login
+  </Card>
+  <Card title="Visual Feedback" icon="bell">
+    Shake animation on incorrect password
+  </Card>
+</CardGroup>
+
+### Credential Encryption
+
+User credentials are encrypted before storage:
+
+```javascript
+// Encryption: AES-GCM with machine-specific key
+// 1. Generate unique machine ID (stored in OPFS)
+// 2. Derive AES-256-GCM key from machine ID via PBKDF2
+// 3. Encrypt credential blob with 12-byte random IV
+// 4. Prepend IV to ciphertext
+// 5. Store in OPFS, IndexedDB, and SW cache
+
+// Decryption: Reverse process using machine ID
+// - If machine ID is lost, credentials are unrecoverable
+// - Provides protection even if storage is extracted
+```
+
+### Multi-Tier Persistence
+
+Credentials survive even aggressive cache clearing:
+
+<Steps>
+  <Step title="Tier 1: OPFS">
+    Origin Private File System - Most durable, survives cache clear
+  </Step>
+  <Step title="Tier 2: IndexedDB">
+    Large structured data - Survives most cache clears
+  </Step>
+  <Step title="Tier 3: Service Worker Cache">
+    SW cache API - Additional redundancy
+  </Step>
+  <Step title="Tier 4: localStorage">
+    Machine ID fallback (less durable, but better than nothing)
+  </Step>
+</Steps>
+
+<Note>
+  When saving, credentials are written to all tiers. When loading, Aurora tries each tier in order until successful.
+</Note>
+
+## Managing User Accounts
+
+### Adding New Users
+
+Administrators can create additional accounts:
+
+1. Open **Settings** → **Users & Accounts**
+2. Click **Add User**
+3. Enter username (must be unique)
+4. Choose display name and avatar
+5. Set password (minimum 4 characters)
+6. Select role: **Standard User** or **Administrator**
+7. Click **Create**
+
+**Via Terminal** (admin only):
+```bash
+# User creation is handled by BPEAuth API
+# CLI tool coming in future release
+```
+
+### User Roles
+
+<Tabs>
+  <Tab title="Administrator">
+    **Permissions**:
+    - Create/delete users
+    - Modify system settings
+    - Install/remove applications
+    - Access all user home directories (with proper sudo)
+    - Change system-wide preferences
+    - View system logs
+    - Factory reset
+
+    **UID Range**: 0-999 (UID 0 is reserved for root)
+  </Tab>
+  <Tab title="Standard User">
+    **Permissions**:
+    - Access own home directory
+    - Install apps to personal space
+    - Change personal preferences
+    - Read-only access to system files
+    - Cannot create/delete users
+    - Cannot modify system settings
+
+    **UID Range**: 1000+ (first user gets UID 1000)
+  </Tab>
+</Tabs>
+
+<Tip>
+  The first user created during OOBE is automatically an Administrator
+</Tip>
+
+## Password Management
+
+### Changing Your Password
+
+1. Open **Settings** → **Users & Accounts**
+2. Click **Change Password** under your account
+3. Enter current password
+4. Enter new password (min 4 chars, 8+ recommended)
+5. Confirm new password
+6. Click **Save**
+
+**Password Requirements**:
+- Minimum 4 characters (8+ recommended for security)
+- No maximum length
+- Any characters allowed (Unicode supported)
+- Passwords are case-sensitive
+
+### Forgotten Password
+
+If you forget your password:
+
+<Warning>
+  There is no password reset mechanism by design. Aurora OS cannot recover passwords due to PBKDF2 one-way hashing. You must perform a factory reset, which erases all data.
+</Warning>
+
+**Recovery Options**:
+1. **Browser DevTools**: If you have browser access, you can inspect localStorage/OPFS
+2. **Factory Reset**: Erases all users and data (Settings → System → Factory Reset)
+3. **Prevention**: Use a password manager or write it down securely
+
+## Sessions & Lock Screen
+
+### Session Management
+
+After successful login, Aurora OS creates a session:
+
+```javascript
+// Session object structure
+{
+  uid: 1000,
+  username: "alice",
+  displayName: "Alice Smith",
+  avatar: "fox",
+  isAdmin: true,
+  token: "64-char-hex-token",  // Random session token
+  loginTime: 1709251200000,     // Unix timestamp
+  lastActivity: 1709251200000   // Updated on interaction
+}
+```
+
+### Session Timeout
+
+- **Default Timeout**: 30 minutes of inactivity
+- **Behavior**: Session lock (not logout) - desktop remains, requires password
+- **Activity Detection**: Mouse movement, keyboard input, app interaction
+- **Configuration**: Settings → Security → Session Timeout (5, 15, 30, 60 min, or Never)
+
+### Lock Screen
+
+Lock your session to protect privacy:
+
+**Trigger Lock**:
+- Press `Super + L` or `Cmd + L`
+- User menu → Lock Screen
+- Automatic after inactivity timeout
+- Close laptop lid (if detected)
+
+**Lock Screen UI**:
+- Real-time clock and date
+- Locked user's avatar and name
+- Password prompt
+- "Show password" toggle
+- No power buttons (different from login screen)
+
+<Note>
+  Lock screen keeps all apps running in the background. Logging out closes all applications.
+</Note>
+
+## Multi-User Support
+
+Aurora OS fully supports multiple concurrent users (though only one active session).
+
+### User Isolation
+
+<CardGroup cols={2}>
+  <Card title="Home Directories" icon="folder">
+    Each user has `/home/username` with read/write permissions
+  </Card>
+  <Card title="Process Ownership" icon="gears">
+    Processes run with user's UID and permission checks
+  </Card>
+  <Card title="File Permissions" icon="shield-check">
+    Standard Unix permissions (rwx for user/group/other)
+  </Card>
+  <Card title="App Sandboxing" icon="cube">
+    Apps run in user context with MAC policy enforcement
+  </Card>
+</CardGroup>
+
+### Switching Users
+
+Currently, Aurora OS supports one active session at a time:
+
+1. Log out current user (closes all apps)
+2. Return to login screen
+3. Select different user
+4. Enter password
+5. Boot to new user's desktop
+
+<Tip>
+  Fast user switching (keeping sessions active) is planned for a future release
+</Tip>
+
+## User Data & Files
+
+### Home Directory Structure
+
+Each user gets a home directory at `/home/username`:
+
+```bash
+/home/username/
+├── Desktop/       # Desktop files
+├── Documents/     # User documents
+├── Downloads/     # Downloaded files
+├── Pictures/      # Images and photos
+├── .bashrc        # Shell configuration
+└── .profile       # Login script
+```
+
+### Application Data
+
+Apps store data in user-specific locations:
+
+- **Notes**: `localStorage` key `aurora-notes` (JSON array)
+- **Tasks**: `localStorage` key `aurora-tasks` (JSON array)
+- **Settings**: `localStorage` keys prefixed with `aurora-*`
+- **Browser**: IndexedDB `aurora-browser` database
+- **Music**: Playlist in `localStorage` key `aurora-music-playlist`
+
+<Note>
+  Data is scoped to the browser origin and survives across sessions and cache clears (OPFS-backed)
+</Note>
+
+## System Logs
+
+Authentication events are logged to `/var/log/auth.log`:
+
+```bash
+# View authentication log
+cat /var/log/auth.log
+
+# Example entries:
+useradd: user 'alice' created (uid=1000)
+login: SUCCESS for 'alice' (uid=1000)
+login: FAILED for 'bob' (user not found)
+login: FAILED for 'alice' (wrong password)
+logout: 'alice'
+passwd: password changed for 'alice'
+userdel: user 'bob' deleted
+```
+
+## Factory Reset
+
+Completely erase all user accounts and data.
+
+### Performing Factory Reset
+
+<Warning>
+  This action is irreversible. All user accounts, files, and settings will be permanently deleted.
+</Warning>
+
+1. Open **Settings** → **System**
+2. Scroll to **Factory Reset**
+3. Read the warning carefully
+4. Enter admin password to confirm
+5. Click **Reset Aurora OS**
+6. System will:
+   - Delete all credentials from OPFS, IndexedDB, SW cache, localStorage
+   - Erase machine ID
+   - Clear all user data
+   - Reset to OOBE state
+7. Page reloads to Out-of-Box Experience
+
+### What Gets Erased
+
+- ✅ All user accounts and passwords
+- ✅ All home directory contents
+- ✅ Application data (Notes, Tasks, Browser history, etc.)
+- ✅ System settings and preferences
+- ✅ Credential encryption keys
+- ✅ Session tokens
+- ✅ Machine ID
+
+### What Survives
+
+- ✅ Operating system code (loaded from HTML/JS files)
+- ✅ Built-in applications (part of OS)
+- ❌ Installed apps from App Store (erased)
+
+## Security Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Strong Passwords" icon="key">
+    Use 12+ characters with mix of letters, numbers, symbols
+  </Card>
+  <Card title="Unique Passwords" icon="fingerprint">
+    Don't reuse passwords from other services
+  </Card>
+  <Card title="Lock When Away" icon="lock">
+    Press `Super + L` when leaving your desk
+  </Card>
+  <Card title="Regular Updates" icon="arrows-rotate">
+    Keep Aurora OS updated (check Settings → System → Updates)
+  </Card>
+  <Card title="Review Logs" icon="list">
+    Check `/var/log/auth.log` for suspicious activity
+  </Card>
+  <Card title="Limit Admin Accounts" icon="user-shield">
+    Only make users admin if they need elevated privileges
+  </Card>
+</CardGroup>
+
+## Advanced: BPE/U Architecture
+
+For developers and advanced users interested in the authentication implementation:
+
+### Components
+
+<Tabs>
+  <Tab title="BPEAuth">
+    Core authentication module with:
+    - PBKDF2 password hashing (600k iterations)
+    - Session management with tokens
+    - Multi-tier credential persistence
+    - Rate limiting and lockout
+    - User CRUD operations
+  </Tab>
+  <Tab title="BPELogin">
+    Login screen UI with:
+    - User selection (single/multi-user)
+    - Password prompt with show/hide
+    - Real-time clock display
+    - Power options (sleep/restart/shutdown)
+    - Lock screen mode
+  </Tab>
+  <Tab title="BPEOOBE">
+    Out-of-box experience with:
+    - Welcome wizard
+    - User creation flow
+    - Timezone detection
+    - Theme selection
+    - Avatar picker
+  </Tab>
+  <Tab title="BPEBoot">
+    Boot orchestration:
+    - BIOS POST simulation
+    - Bootloader messages
+    - Kernel initialization
+    - Service spawning
+    - OOBE/Login routing
+  </Tab>
+</Tabs>
+
+### Syscalls
+
+Authentication exposes syscalls for process integration:
+
+```c
+// BPE syscall numbers (via BPESyscall.NR)
+SPAWN      // Create new process with UID/GID
+KILL       // Terminate process (permission check)
+GETUID     // Get process UID
+SETUID     // Set process UID (admin only)
+GETEUID    // Get effective UID
+AUTH_LOGIN // Authenticate user (userspace helper)
+```
+
+<Tip>
+  All file and process operations go through the BPE kernel with MAC (Mandatory Access Control) policy enforcement
+</Tip>

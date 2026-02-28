@@ -1,0 +1,515 @@
+---
+title: Network Operations
+description: System calls for socket-based networking (TCP/UDP)
+---
+
+## Overview
+
+Aurora OS provides a simplified Berkeley sockets API for network communication. The implementation is built on top of a real TCP/IP stack with support for TCP connections and UDP datagrams.
+
+<Note>
+  Network syscalls use file descriptors from the process fd table. Socket fds are marked with `flags = -1` to distinguish them from regular files.
+</Note>
+
+---
+
+## SYS_SOCKET
+
+Create a network socket and return a file descriptor.
+
+**Syscall Number:** 24
+
+### Parameters
+
+<ParamField path="domain" type="int">
+  Protocol family (e.g., AF_INET). Currently ignored; all sockets use IPv4.
+</ParamField>
+
+<ParamField path="type" type="int">
+  Socket type (SOCK_STREAM for TCP, SOCK_DGRAM for UDP). Currently ignored.
+</ParamField>
+
+<ParamField path="protocol" type="int">
+  Protocol number. Currently ignored; defaults to TCP.
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - On success: file descriptor for the socket (0-31)
+  - On error: -1 (no free fd slots)
+</ResponseField>
+
+### Behavior
+
+Allocates a file descriptor and marks it as a socket:
+- Sets `in_use = 1`
+- Sets `vfs_node = 0` (no VFS backing)
+- Sets `flags = -1` to mark as socket
+- Sets `offset = 0` (will store connection ID later)
+
+### Example
+
+<CodeGroup>
+```c C - Create TCP Socket
+int sockfd = socket_syscall(AF_INET, SOCK_STREAM, 0);
+if (sockfd >= 0) {
+    // Use socket for TCP operations
+}
+```
+
+```c C - Create UDP Socket
+int sockfd = socket_syscall(AF_INET, SOCK_DGRAM, 0);
+if (sockfd >= 0) {
+    // Use socket for UDP operations
+}
+```
+</CodeGroup>
+
+---
+
+## SYS_BIND
+
+Bind a socket to a local address and port.
+
+**Syscall Number:** 25
+
+### Parameters
+
+<ParamField path="fd" type="int" required>
+  Socket file descriptor
+</ParamField>
+
+<ParamField path="port" type="uint16_t" required>
+  Port number to bind to (host byte order)
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - On success: 0
+  - On error: -1 (invalid fd)
+</ResponseField>
+
+### Behavior
+
+<Info>
+  The current implementation only binds the port number. The address is always 0.0.0.0 (all interfaces).
+</Info>
+
+Stores the port number in `fd_entry.offset` for later use by `SYS_LISTEN`.
+
+### Example
+
+```c
+int sockfd = socket_syscall(AF_INET, SOCK_STREAM, 0);
+bind_syscall(sockfd, 8080);  // Bind to port 8080
+```
+
+<Warning>
+  Aurora OS does not currently implement port conflict detection. Multiple processes can bind to the same port.
+</Warning>
+
+---
+
+## SYS_CONNECT
+
+Connect a socket to a remote address and port.
+
+**Syscall Number:** 26
+
+### Parameters
+
+<ParamField path="fd" type="int" required>
+  Socket file descriptor
+</ParamField>
+
+<ParamField path="addr" type="uint32_t" required>
+  Remote IPv4 address (network byte order)
+</ParamField>
+
+<ParamField path="port" type="uint16_t" required>
+  Remote port number (host byte order)
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - On success: 0
+  - On error: -1 (connection failed or invalid fd)
+</ResponseField>
+
+### Behavior
+
+1. Validates the socket file descriptor
+2. Calls `tcp_connect()` from the network stack:
+   - Initiates TCP three-way handshake
+   - Allocates a connection ID
+3. Stores the connection ID in `fd_entry.offset`
+4. Returns 0 on successful connection
+
+<Note>
+  This is a blocking operation. The syscall waits for the TCP handshake to complete before returning.
+</Note>
+
+### Example
+
+<CodeGroup>
+```c C - Connect to Web Server
+#define IP(a,b,c,d) ((a) | ((b)<<8) | ((c)<<16) | ((d)<<24))
+
+int sockfd = socket_syscall(AF_INET, SOCK_STREAM, 0);
+uint32_t server_ip = IP(93, 184, 216, 34);  // example.com
+int ret = connect_syscall(sockfd, server_ip, 80);
+if (ret == 0) {
+    // Connected successfully
+    const char *request = "GET / HTTP/1.0\r\n\r\n";
+    send_syscall(sockfd, request, strlen(request));
+}
+```
+</CodeGroup>
+
+---
+
+## SYS_LISTEN
+
+Listen for incoming connections on a bound socket.
+
+**Syscall Number:** 38
+
+### Parameters
+
+<ParamField path="fd" type="int" required>
+  Socket file descriptor (must be bound via SYS_BIND)
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - On success: 0
+  - On error: -1 (invalid fd or tcp_listen failed)
+</ResponseField>
+
+### Behavior
+
+1. Retrieves the bound port from `fd_entry.offset`
+2. Calls `tcp_listen()` to create a listening socket:
+   - Registers the port in the TCP layer
+   - Allocates a listen connection ID
+3. Stores the listen connection ID in `fd_entry.offset`
+
+<Info>
+  Aurora OS does not have a backlog parameter. The TCP layer manages incoming connections internally.
+</Info>
+
+### Example
+
+```c
+int sockfd = socket_syscall(AF_INET, SOCK_STREAM, 0);
+bind_syscall(sockfd, 8080);
+listen_syscall(sockfd);  // Start listening on port 8080
+```
+
+---
+
+## SYS_ACCEPT
+
+Accept an incoming connection on a listening socket.
+
+**Syscall Number:** 39
+
+### Parameters
+
+<ParamField path="fd" type="int" required>
+  Listening socket file descriptor
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="int">
+  - On success: new file descriptor for the accepted connection
+  - On error: -1 (invalid fd or no connections available)
+</ResponseField>
+
+### Behavior
+
+<Info>
+  This is a blocking syscall. If no connections are pending, the process is blocked until a client connects.
+</Info>
+
+1. Retrieves the listen connection ID from `fd_entry.offset`
+2. Calls `tcp_accept_begin()` to prepare for accepting
+3. Calls `tcp_accept_result()` to check for pending connections
+4. If no connection available:
+   - Blocks the process (`state = PROC_BLOCKED`)
+   - Reschedules
+   - Retries after wakeup
+5. Allocates a new file descriptor for the accepted connection
+6. Returns the new fd
+
+### Example - Simple Echo Server
+
+<CodeGroup>
+```c C - TCP Echo Server
+int listen_fd = socket_syscall(AF_INET, SOCK_STREAM, 0);
+bind_syscall(listen_fd, 9999);
+listen_syscall(listen_fd);
+
+while (1) {
+    int client_fd = accept_syscall(listen_fd);
+    if (client_fd >= 0) {
+        // Handle client in child process
+        int pid = fork_syscall();
+        if (pid == 0) {
+            close_syscall(listen_fd);
+            
+            char buf[256];
+            int n = recv_syscall(client_fd, buf, sizeof(buf));
+            if (n > 0) {
+                send_syscall(client_fd, buf, n);  // Echo back
+            }
+            close_syscall(client_fd);
+            exit_syscall(0);
+        } else {
+            close_syscall(client_fd);  // Parent closes client fd
+        }
+    }
+}
+```
+</CodeGroup>
+
+---
+
+## SYS_SEND
+
+Send data over a connected socket.
+
+**Syscall Number:** 27
+
+### Parameters
+
+<ParamField path="fd" type="int" required>
+  Socket file descriptor (must be connected)
+</ParamField>
+
+<ParamField path="buf" type="const void*" required>
+  Buffer containing data to send
+</ParamField>
+
+<ParamField path="len" type="size_t" required>
+  Number of bytes to send
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="ssize_t">
+  - On success: number of bytes sent
+  - On error: -1 (invalid fd or connection error)
+</ResponseField>
+
+### Behavior
+
+1. Retrieves the connection ID from `fd_entry.offset`
+2. Calls `tcp_send(conn_id, buf, len)`:
+   - Segments data into TCP packets
+   - Transmits via the network stack
+   - Handles retransmission if needed
+3. Returns the number of bytes sent
+
+### Example
+
+```c
+const char *message = "Hello, server!";
+int sent = send_syscall(sockfd, message, strlen(message));
+if (sent > 0) {
+    printf("Sent %d bytes\n", sent);
+}
+```
+
+---
+
+## SYS_RECV
+
+Receive data from a connected socket.
+
+**Syscall Number:** 28
+
+### Parameters
+
+<ParamField path="fd" type="int" required>
+  Socket file descriptor (must be connected)
+</ParamField>
+
+<ParamField path="buf" type="void*" required>
+  Buffer to store received data
+</ParamField>
+
+<ParamField path="len" type="size_t" required>
+  Maximum number of bytes to receive (buffer size)
+</ParamField>
+
+### Returns
+
+<ResponseField name="return" type="ssize_t">
+  - On success: number of bytes received (may be less than len)
+  - On connection closed: 0
+  - On error: -1
+</ResponseField>
+
+### Behavior
+
+<Info>
+  This is typically a blocking call. If no data is available, the implementation may block the process (behavior depends on TCP layer implementation).
+</Info>
+
+1. Retrieves the connection ID from `fd_entry.offset`
+2. Calls `tcp_recv(conn_id, buf, len)`:
+   - Reads from the TCP receive buffer
+   - Copies up to `len` bytes to user buffer
+3. Returns the number of bytes copied
+
+### Example
+
+<CodeGroup>
+```c C - Receive Loop
+char buffer[1024];
+while (1) {
+    int n = recv_syscall(sockfd, buffer, sizeof(buffer));
+    if (n > 0) {
+        // Process n bytes of data
+        process_data(buffer, n);
+    } else if (n == 0) {
+        // Connection closed
+        break;
+    } else {
+        // Error
+        break;
+    }
+}
+```
+</CodeGroup>
+
+---
+
+## Network Stack Integration
+
+The syscall layer interfaces with the kernel network stack implemented in `/kernel/src/net/`:
+
+### TCP Functions
+
+```c
+// Connect to remote host
+int tcp_connect(uint32_t local_addr, uint32_t remote_addr, uint16_t remote_port);
+
+// Send data on established connection
+int tcp_send(int conn_id, const void *data, size_t len);
+
+// Receive data from established connection
+int tcp_recv(int conn_id, void *buf, size_t len);
+
+// Close TCP connection
+int tcp_close(int conn_id);
+
+// Create listening socket
+int tcp_listen(uint32_t local_addr, uint16_t local_port);
+
+// Begin accepting connections
+void tcp_accept_begin(int listen_conn, int pid);
+
+// Get accepted connection (if available)
+int tcp_accept_result(int listen_conn);
+```
+
+### UDP Functions
+
+```c
+// Send UDP datagram
+int udp_send(uint32_t src_addr, uint16_t src_port,
+             uint32_t dst_addr, uint16_t dst_port,
+             const void *data, size_t len);
+```
+
+<Note>
+  UDP receive is not yet wired into the syscall interface. UDP sockets can send but not receive.
+</Note>
+
+---
+
+## Complete Example - HTTP Client
+
+<CodeGroup>
+```c C - Simple HTTP GET
+#define IP(a,b,c,d) ((a) | ((b)<<8) | ((c)<<16) | ((d)<<24))
+
+void http_get(const char *host_ip_str, uint16_t port, const char *path) {
+    // Create socket
+    int sockfd = socket_syscall(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        printf("socket() failed\n");
+        return;
+    }
+    
+    // Connect to server
+    uint32_t server_ip = IP(93, 184, 216, 34);  // example.com
+    if (connect_syscall(sockfd, server_ip, port) < 0) {
+        printf("connect() failed\n");
+        close_syscall(sockfd);
+        return;
+    }
+    
+    // Send HTTP request
+    char request[512];
+    snprintf(request, sizeof(request),
+             "GET %s HTTP/1.0\r\n"
+             "Host: example.com\r\n"
+             "\r\n", path);
+    send_syscall(sockfd, request, strlen(request));
+    
+    // Receive response
+    char buffer[4096];
+    int total = 0;
+    while (1) {
+        int n = recv_syscall(sockfd, buffer + total, sizeof(buffer) - total);
+        if (n <= 0) break;
+        total += n;
+    }
+    
+    // Print response
+    buffer[total] = '\0';
+    printf("Response (%d bytes):\n%s\n", total, buffer);
+    
+    // Clean up
+    close_syscall(sockfd);
+}
+```
+</CodeGroup>
+
+---
+
+## Socket Lifecycle
+
+### Client (TCP)
+
+```
+socket() → connect() → send()/recv() → close()
+```
+
+### Server (TCP)
+
+```
+socket() → bind() → listen() → accept() → send()/recv() → close()
+                                    ↑                           │
+                                    └───────────────────────────┘
+                                    (loop for multiple clients)
+```
+
+### UDP (Connectionless)
+
+```
+socket() → bind() → sendto()/recvfrom() → close()
+         (optional)
+```
+
+<Warning>
+  Aurora OS sockets do not support all POSIX socket options. Features like SO_REUSEADDR, non-blocking mode, and socket timeouts are not implemented.
+</Warning>

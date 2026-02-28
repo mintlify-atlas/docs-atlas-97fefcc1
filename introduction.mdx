@@ -1,0 +1,184 @@
+---
+title: Introduction
+description: A reactive, agentic OS with modern polish
+---
+
+<img
+  className="block dark:hidden"
+  src="/images/hero-light.svg"
+  alt="Aurora OS Hero Light"
+/>
+<img
+  className="hidden dark:block"
+  src="/images/hero-dark.svg"
+  alt="Aurora OS Hero Dark"
+/>
+
+# Welcome to AURORA OS
+
+A production-grade operating system with a **hybrid kernel** (monolithic core + modular services) that runs both natively on bare metal and in your browser via WebAssembly.
+
+<CardGroup cols={2}>
+  <Card
+    title="Quick Start"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Get Aurora OS running in seconds — browser or native
+  </Card>
+  <Card
+    title="Features"
+    icon="stars"
+    href="/features"
+  >
+    Explore the unique capabilities that set Aurora apart
+  </Card>
+  <Card
+    title="Architecture"
+    icon="sitemap"
+    href="/architecture"
+  >
+    Deep dive into kernel design and subsystems
+  </Card>
+  <Card
+    title="API Reference"
+    icon="code"
+    href="/api"
+  >
+    System calls, IPC, and development guides
+  </Card>
+</CardGroup>
+
+## What Makes Aurora Special
+
+<AccordionGroup>
+  <Accordion title="Dual-Target Runtime" icon="display">
+    Aurora runs **everywhere**:
+    
+    - **Native**: Boots on x86_64 and ARM hardware via UEFI/BIOS
+    - **Browser**: Full OS experience via WebAssembly/WASI runtime
+    - Same kernel, same apps, seamless experience
+    
+    The browser runtime uses a **BPE/U Engine** (Browser Processing Engine/Unit) that emulates a complete virtual CPU.
+  </Accordion>
+
+  <Accordion title="Hybrid Kernel Architecture" icon="layer-group">
+    Best of both worlds:
+    
+    - **Monolithic core** for performance (scheduler, memory, VFS)
+    - **Modular services** for security and flexibility
+    - **Signed loadable modules** for drivers
+    - **Capability-based IPC** for process isolation
+    
+    Hot paths stay in-kernel for speed, while drivers can be updated independently.
+  </Accordion>
+
+  <Accordion title="Production-Grade Features" icon="shield-check">
+    - 4-level paging with higher-half kernel mapping
+    - KASLR + ASLR for security
+    - CFS-inspired preemptive scheduler
+    - TCP/UDP/IP network stack
+    - VFS with tmpfs, ext2, FAT support
+    - Signal delivery with user-handler support
+    - COW (Copy-on-Write) page fault handler
+  </Accordion>
+
+  <Accordion title="Modern UI/UX" icon="palette">
+    - **60fps animations** with GPU acceleration
+    - **Glass morphism** and translucent surfaces
+    - **Material Design ripple effects** on all interactions
+    - **Comprehensive keyboard shortcuts** (press `Shift + ?`)
+    - **Persistent auth** with OPFS + WebCrypto
+    - **Real boot sequence**: BIOS POST → Bootloader → Kernel → Login
+  </Accordion>
+</AccordionGroup>
+
+## Design Philosophy
+
+<CardGroup cols={3}>
+  <Card title="Performance First" icon="gauge-high">
+    Every animation runs at 60fps. Window open: 380ms. Button response: 120ms. Boot to desktop: < 2 seconds.
+  </Card>
+  <Card title="Security by Design" icon="lock">
+    KASLR, ASLR, stack canaries, signed modules, capability-based IPC, and sandboxed agent execution.
+  </Card>
+  <Card title="Developer Friendly" icon="code">
+    Clean C/Assembly/Rust codebase. Comprehensive syscall API. Modular architecture. Full documentation.
+  </Card>
+</CardGroup>
+
+## Applications
+
+Aurora includes a complete userland with modern applications:
+
+<Tabs>
+  <Tab title="Core Apps">
+    - **Terminal** — Full-featured shell with command history and xterm support
+    - **Files** — Modern file manager with grid/list views and drag-drop
+    - **Browser** — Web browser with tab support and real rendering
+    - **Text Editor** — Code editor with syntax highlighting (CodeMirror)
+    - **System Monitor** — Real-time CPU, memory, network metrics with charts
+    - **Settings** — System configuration and preferences
+  </Tab>
+  <Tab title="Enhanced Apps">
+    - **Weather** — Beautiful weather display with 5-day forecast
+    - **Notes** — Rich note-taking with markdown and auto-save
+    - **Tasks** — To-do list with completion tracking and persistence
+    - **Music** — Music player with playlist support
+    - **Calculator** — Scientific calculator
+    - **App Store** — Install additional applications
+  </Tab>
+</Tabs>
+
+## Performance Metrics
+
+| Metric | Value | Details |
+|--------|-------|----------|
+| **Boot Time** | < 2s | BIOS POST → Desktop |
+| **Window Animation** | 380ms | Smooth open with bounce |
+| **Frame Rate** | 60fps | GPU-accelerated transforms |
+| **Button Response** | 120ms | Material ripple effect |
+| **Memory Footprint** | Low | Optimized for efficiency |
+
+<Tip>
+  Aurora OS respects user preferences: `prefers-reduced-motion`, `prefers-color-scheme`, and `prefers-contrast` are all supported.
+</Tip>
+
+## Browser Compatibility
+
+<ResponseField name="Chrome/Edge" type="Recommended">
+  Full support with all features enabled
+</ResponseField>
+
+<ResponseField name="Firefox" type="Supported">
+  Full support with excellent performance
+</ResponseField>
+
+<ResponseField name="Safari" type="Supported">
+  Full support with WebKit optimizations
+</ResponseField>
+
+<ResponseField name="Mobile Browsers" type="Limited">
+  Desktop mode required (≥1024px width)
+</ResponseField>
+
+## Next Steps
+
+<Steps>
+  <Step title="Try it Now">
+    Jump to the [Quick Start](/quickstart) to run Aurora in your browser instantly.
+  </Step>
+  <Step title="Explore Features">
+    Learn about [unique capabilities](/features) like the BPE/U engine and agentic runtime.
+  </Step>
+  <Step title="Build Native">
+    Follow the native build guide to create a bootable ISO for real hardware.
+  </Step>
+  <Step title="Develop Apps">
+    Check the [API documentation](/api) to build applications for Aurora.
+  </Step>
+</Steps>
+
+<Note>
+  Aurora OS is open source and welcomes contributions! See [CONTRIBUTING.md](https://github.com/yash1511-bogam/aurora-os/blob/main/CONTRIBUTING.md) for guidelines.
+</Note>

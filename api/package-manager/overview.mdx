@@ -1,0 +1,311 @@
+---
+title: "Package Manager Overview"
+description: "Aurora OS browser runtime package management system for installing and managing applications"
+---
+
+## Introduction
+
+The Aurora OS App Store provides a lightweight package management system for the browser runtime. Apps are self-contained JavaScript modules that run inside the OS desktop environment with full integration into the launcher, taskbar, and window manager.
+
+<Info>
+  The package manager uses client-side localStorage for persistence, making it perfect for Progressive Web App (PWA) deployments without requiring a backend server.
+</Info>
+
+## Architecture
+
+The package management system consists of three main components:
+
+### Store Catalog
+
+In-memory app registry (`STORE_CATALOG`) containing app metadata and executable code.
+
+<CodeGroup>
+```javascript App Registry Structure
+const STORE_CATALOG = [
+  {
+    id: 'clock-app',
+    name: 'World Clock',
+    icon: 'clock',
+    color: 'linear-gradient(135deg,#1a2040,#0d1530)',
+    cat: 'Utilities',
+    size: '2 KB',
+    rating: 4.5,
+    desc: 'Multiple timezone clocks with analog display.',
+    run: Function  // App entry point
+  },
+  // ... more apps
+];
+```
+
+```javascript Installed Apps Storage
+const installedApps = JSON.parse(
+  localStorage.getItem('aurora-installed-apps') || '[]'
+);
+// Example: ['clock-app', 'notes-app', 'todo-app']
+```
+</CodeGroup>
+
+### Runtime App Registry
+
+The `APPS` array contains all launchable applications. Installed store apps are automatically merged into this registry on boot.
+
+```javascript Runtime Synchronization
+STORE_CATALOG.forEach(a => {
+  if (isInstalled(a.id) && !APPS.find(x => x.id === a.id)) {
+    APPS.push({
+      id: a.id,
+      name: a.name,
+      icon: a.icon,
+      color: a.color,
+      action: a.run
+    });
+  }
+});
+```
+
+### Persistence Layer
+
+All package state is persisted to browser localStorage:
+
+<ParamField path="aurora-installed-apps" type="string[]">
+  JSON array of installed app IDs. Survives page reload and browser restart.
+</ParamField>
+
+## CLI Interface
+
+Manage packages directly from the terminal using the `store` command:
+
+<CodeGroup>
+```bash List Available Apps
+store list
+# Output:
+# [✓] clock-app       World Clock        Utilities
+# [ ] weather-app     Weather            Utilities
+# [✓] notes-app       Sticky Notes       Productivity
+```
+
+```bash Search Apps
+store search clock
+# Returns matching apps by name or ID
+```
+
+```bash Install App
+store install clock-app
+# Output: Installed World Clock (2 KB)
+```
+
+```bash Remove App
+store remove clock-app
+# Output: Removed World Clock
+```
+
+```bash Launch App
+store run clock-app
+# Output: Launching World Clock...
+```
+</CodeGroup>
+
+### Command Reference
+
+<ParamField path="store list" type="command">
+  List all available apps with installation status indicator ([✓] installed, [ ] not installed)
+</ParamField>
+
+<ParamField path="store search <query>" type="command">
+  Search apps by name or description. Returns filtered list with install status.
+</ParamField>
+
+<ParamField path="store install <app-id>" type="command">
+  Install an app by ID. Adds to `installedApps`, updates localStorage, merges into `APPS` array, and shows notification.
+</ParamField>
+
+<ParamField path="store remove <app-id>" type="command">
+  Uninstall an app. Removes from `installedApps`, updates localStorage, removes from `APPS`, and closes any open windows.
+</ParamField>
+
+<ParamField path="store run <app-id>" type="command">
+  Launch an installed app. Fails if app is not installed.
+</ParamField>
+
+## GUI Interface
+
+The App Store window provides a visual interface for package management:
+
+### Features
+
+<CardGroup cols={2}>
+  <Card title="Discover Tab" icon="compass">
+    Browse all available apps with featured banner highlighting top apps. Supports filtering by category and search.
+  </Card>
+  <Card title="Installed Tab" icon="box">
+    View and manage installed apps. Shows install count in tab badge.
+  </Card>
+  <Card title="Search" icon="magnifying-glass">
+    Real-time filtering by app name or description across all apps.
+  </Card>
+  <Card title="App Cards" icon="grid">
+    Rich app cards with icon, name, category, size, rating, description, and Install/Open/Remove buttons.
+  </Card>
+</CardGroup>
+
+### App Store Window
+
+```javascript Opening the Store
+function openStore() {
+  createWindow('store', 'App Store', 600, 480, 120, 40, '', 'store');
+  // Renders tabs, search, featured banner, and app grid
+}
+```
+
+## Installation Flow
+
+When a user installs an app:
+
+<Steps>
+  <Step title="Trigger Installation">
+    User clicks "Install" button in App Store UI or runs `store install <id>` in terminal.
+  </Step>
+  <Step title="Update State">
+    App ID is added to `installedApps` array in memory.
+  </Step>
+  <Step title="Persist to Storage">
+    Array is serialized and saved to `localStorage['aurora-installed-apps']`.
+  </Step>
+  <Step title="Merge to Runtime">
+    App entry is added to `APPS` array, making it appear in the launcher and taskbar.
+  </Step>
+  <Step title="Confirm">
+    Notification is shown confirming successful installation.
+  </Step>
+</Steps>
+
+```javascript Installation Implementation
+function installApp(id) {
+  if (!isInstalled(id)) {
+    installedApps.push(id);
+    localStorage.setItem('aurora-installed-apps', JSON.stringify(installedApps));
+    
+    const app = STORE_CATALOG.find(a => a.id === id);
+    if (app) {
+      APPS.push({
+        id: app.id,
+        name: app.name,
+        icon: app.icon,
+        color: app.color,
+        action: app.run
+      });
+    }
+    
+    notify('Installed', `${app?.name || id} installed successfully`, 'download', 'var(--success)');
+  }
+}
+```
+
+## Uninstallation Flow
+
+When a user removes an app:
+
+<Steps>
+  <Step title="Trigger Removal">
+    User clicks "Remove" button or runs `store remove <id>`.
+  </Step>
+  <Step title="Update State">
+    App ID is removed from `installedApps` array.
+  </Step>
+  <Step title="Persist Changes">
+    Updated array is saved to localStorage.
+  </Step>
+  <Step title="Remove from Runtime">
+    App is removed from `APPS` array.
+  </Step>
+  <Step title="Close Windows">
+    If app window is currently open, it is closed.
+  </Step>
+  <Step title="Confirm">
+    Notification confirms removal.
+  </Step>
+</Steps>
+
+```javascript Uninstallation Implementation
+function uninstallApp(id) {
+  const idx = installedApps.indexOf(id);
+  if (idx >= 0) {
+    installedApps.splice(idx, 1);
+    localStorage.setItem('aurora-installed-apps', JSON.stringify(installedApps));
+  }
+  
+  const ai = APPS.findIndex(a => a.id === id);
+  if (ai >= 0) APPS.splice(ai, 1);
+  
+  if (wins[id]) closeWindow(id);
+  
+  notify('Removed', 'App removed', 'trash', 'var(--muted)');
+}
+```
+
+## Available Apps
+
+The Aurora OS browser runtime includes these built-in apps:
+
+| App | Category | Size | Rating | Description |
+|-----|----------|------|--------|-------------|
+| World Clock | Utilities | 2 KB | 4.5★ | Multi-timezone analog clocks |
+| Weather | Utilities | 3 KB | 4.2★ | Weather display with forecast |
+| Sticky Notes | Productivity | 2 KB | 4.7★ | Color-coded notes saved to localStorage |
+| Tasks | Productivity | 2 KB | 4.6★ | Task manager with checkboxes |
+| Aurora Paint | Creative | 4 KB | 4.3★ | Canvas drawing tool with brush controls |
+| Aurora Radio | Entertainment | 3 KB | 4.0★ | Ambient sound generator with FFT visualizer |
+| Snake | Games | 3 KB | 4.8★ | Classic snake game with speed levels |
+| Pomodoro Timer | Productivity | 2 KB | 4.4★ | Focus timer with work/break intervals |
+| Image Viewer | Utilities | 2 KB | 4.2★ | View images with zoom and slideshow |
+
+## Categories
+
+Apps are organized into five categories:
+
+<ResponseField name="Utilities" type="category">
+  System tools (clocks, weather, image viewer)
+</ResponseField>
+
+<ResponseField name="Productivity" type="category">
+  Work tools (notes, tasks, timers)
+</ResponseField>
+
+<ResponseField name="Creative" type="category">
+  Drawing and design tools
+</ResponseField>
+
+<ResponseField name="Entertainment" type="category">
+  Media and ambient sounds
+</ResponseField>
+
+<ResponseField name="Games" type="category">
+  Lightweight browser games
+</ResponseField>
+
+## Security
+
+<Note>
+  All apps run in the same browser sandbox as the OS runtime with the following constraints:
+</Note>
+
+- Apps run in browser JavaScript sandbox
+- No filesystem access beyond the virtual FS
+- No network access beyond the virtual network layer
+- Apps cannot modify other apps' localStorage keys by convention
+- All code is client-side with no server execution
+
+## Future: Remote Repository
+
+For native Aurora OS, the package repository server (`/userland/pkg-server/`) will serve signed packages over HTTPS with TUF-compliant metadata. The browser runtime catalog can be extended to fetch from a remote JSON manifest.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Package Spec" icon="file-code" href="/api/package-manager/package-spec">
+    Learn about the app manifest format and package structure
+  </Card>
+  <Card title="Repository Spec" icon="database" href="/api/package-manager/repository-spec">
+    Understand the catalog structure and repository model
+  </Card>
+</CardGroup>

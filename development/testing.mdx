@@ -1,0 +1,467 @@
+---
+title: Testing
+description: Run unit tests, integration tests, and validation checks for Aurora OS
+---
+
+## Test Overview
+
+Aurora OS includes multiple test suites to ensure kernel stability and correctness:
+
+- **Unit Tests** - Kernel component tests (allocator, scheduler, capabilities)
+- **QEMU Boot Tests** - End-to-end boot validation
+- **Source Checks** - Validate kernel symbols and structure
+- **Browser Tests** - WebAssembly runtime testing with Playwright
+- **Fuzz Testing** - Automated fuzzing for security
+
+---
+
+## Running All Tests
+
+```bash
+make test
+```
+
+This command:
+1. Builds the kernel (if needed)
+2. Compiles and runs unit tests
+3. Executes QEMU boot validation
+
+<Info>
+The test suite runs automatically in CI on every pull request.
+</Info>
+
+---
+
+## Unit Tests
+
+### Test Harness
+
+The kernel includes a hosted test harness that runs without QEMU:
+
+```bash
+# Compile and run unit tests
+gcc -I kernel/src tests/unit/kernel/test_harness.c -o dist/test_runner
+./dist/test_runner
+```
+
+### Test Coverage
+
+<AccordionGroup>
+  <Accordion title="Physical Allocator Tests">
+    Tests the kernel's physical memory allocator:
+
+    - Page allocation and deallocation
+    - Memory region management
+    - Boundary conditions
+    - Out-of-memory handling
+  </Accordion>
+
+  <Accordion title="Heap Tests (kmalloc/kfree)">
+    Tests kernel heap allocation:
+
+    - Dynamic allocation
+    - Memory coalescing
+    - Free list management
+    - Fragmentation handling
+  </Accordion>
+
+  <Accordion title="Capability Tests">
+    Tests the object-capability system:
+
+    - Capability creation
+    - Capability verification
+    - Capability revocation
+    - Permission enforcement
+  </Accordion>
+
+  <Accordion title="Scheduler Tests">
+    Tests the CFS-style scheduler:
+
+    - vruntime ordering
+    - Process priority
+    - Time slice allocation
+    - Context switching
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## QEMU Boot Tests
+
+Validates that the kernel boots successfully in QEMU:
+
+```bash
+bash tests/qemu/boot-test.sh
+```
+
+### What It Tests
+
+<Steps>
+  <Step title="ISO Build">
+    Verifies the bootable ISO can be created:
+    ```bash
+    make iso
+    ```
+  </Step>
+
+  <Step title="Boot Sequence">
+    Launches QEMU with a timeout and monitors serial output:
+    ```bash
+    qemu-system-x86_64 \
+      -cdrom dist/aurora-os.iso \
+      -m 128M \
+      -nographic \
+      -serial mon:stdio \
+      -no-reboot \
+      -timeout 10
+    ```
+  </Step>
+
+  <Step title="Boot Verification">
+    Checks for kernel initialization messages:
+    - Bootloader handoff
+    - Memory initialization
+    - Capability system ready
+    - Scheduler initialized
+  </Step>
+</Steps>
+
+<Tip>
+Boot logs are saved to `dist/boot-test.log` for debugging.
+</Tip>
+
+---
+
+## Source Validation
+
+Run static analysis checks on the kernel source:
+
+```bash
+# Run all source checks
+for f in tests/source-checks/*.sh; do bash "$f"; done
+```
+
+### Check Categories
+
+<Tabs>
+  <Tab title="Symbol Checks">
+    Validates kernel ELF symbols:
+
+    ```bash
+    bash tests/source-checks/symbols.sh
+    ```
+
+    - Required kernel symbols are present
+    - No undefined references
+    - Proper symbol visibility
+  </Tab>
+
+  <Tab title="Filesystem Checks">
+    Validates filesystem implementation:
+
+    ```bash
+    bash tests/source-checks/filesystem.sh
+    ```
+
+    - VFS structure correctness
+    - Filesystem driver registration
+    - Mount point handling
+  </Tab>
+
+  <Tab title="Network Checks">
+    Validates network stack:
+
+    ```bash
+    bash tests/source-checks/networking.sh
+    ```
+
+    - TCP/IP stack structure
+    - Socket implementation
+    - Protocol handlers
+  </Tab>
+
+  <Tab title="Init Checks">
+    Validates initialization sequence:
+
+    ```bash
+    bash tests/source-checks/init.sh
+    ```
+
+    - Boot order correctness
+    - Subsystem dependencies
+    - Early initialization
+  </Tab>
+</Tabs>
+
+---
+
+## Browser Tests (Playwright)
+
+Test the WebAssembly runtime in real browsers:
+
+<Steps>
+  <Step title="Install Dependencies">
+    ```bash
+    npm install @playwright/test serve
+    npx playwright install --with-deps chromium
+    ```
+  </Step>
+
+  <Step title="Build WASM Runtime">
+    ```bash
+    make wasm
+    ```
+
+    This creates `wasm-runtime/pwa/kernel.wasm` and loader.
+  </Step>
+
+  <Step title="Run Browser Tests">
+    ```bash
+    npx playwright test tests/browser/chrome.spec.ts --reporter=list
+    ```
+
+    <CodeGroup>
+      ```bash Verbose Output
+      npx playwright test --reporter=list
+      ```
+
+      ```bash Headed Mode
+      npx playwright test --headed
+      ```
+
+      ```bash Debug Mode
+      npx playwright test --debug
+      ```
+    </CodeGroup>
+  </Step>
+</Steps>
+
+### Test Coverage
+
+Browser tests validate:
+- Page loads without errors
+- WASM module initializes
+- Boot screen renders
+- Kernel bridge functions work
+- Service worker caches assets
+
+<Info>
+Playwright automatically serves `wasm-runtime/pwa/` using the `webServer` configuration.
+</Info>
+
+---
+
+## Fuzz Testing
+
+Automated fuzzing runs nightly via GitHub Actions.
+
+### Local Fuzzing
+
+<Tabs>
+  <Tab title="LibFuzzer">
+    ```bash
+    cd tests/fuzz/c
+    gcc -fsanitize=address,fuzzer fuzz_target.c -o fuzzer
+    ./fuzzer
+    ```
+
+    Uses LLVM's libFuzzer for coverage-guided fuzzing.
+  </Tab>
+
+  <Tab title="Standalone Fuzzer">
+    If libFuzzer is not available:
+
+    ```bash
+    cd tests/fuzz/c
+    gcc -fsanitize=address -DFUZZ_STANDALONE fuzz_target.c -o fuzz_basic
+    ./fuzz_basic
+    ```
+  </Tab>
+</Tabs>
+
+### Trigger Manual Fuzz Run
+
+1. Go to GitHub Actions → Nightly Fuzz
+2. Click "Run workflow"
+3. Wait for results
+
+<Warning>
+Fuzz testing can take hours. Results are reported as GitHub Issues if crashes are found.
+</Warning>
+
+---
+
+## Continuous Integration
+
+All tests run automatically on:
+- Pull requests
+- Commits to `main`
+- Nightly builds
+
+### CI Test Matrix
+
+```yaml
+Jobs:
+  - build:       Compile kernel for all architectures
+  - unit-tests:  Run hosted unit tests
+  - qemu-tests:  Boot validation
+  - wasm-tests:  Browser tests with Playwright
+  - fuzz:        Nightly fuzzing (scheduled)
+```
+
+<Info>
+See `.github/workflows/` for full CI configuration.
+</Info>
+
+---
+
+## Test Development
+
+### Adding Unit Tests
+
+1. Add test functions to `tests/unit/kernel/test_harness.c`:
+
+```c
+void test_my_feature(void) {
+    // Setup
+    int result = my_kernel_function();
+    
+    // Assert
+    assert(result == EXPECTED_VALUE);
+}
+```
+
+2. Register in test suite:
+
+```c
+int main(void) {
+    test_my_feature();
+    printf("✓ My feature test passed\n");
+    return 0;
+}
+```
+
+### Adding Browser Tests
+
+1. Create a new spec file in `tests/browser/`:
+
+```typescript
+import { test, expect } from '@playwright/test';
+
+test('my feature works', async ({ page }) => {
+  await page.goto('http://localhost:8080');
+  await expect(page.locator('#my-element')).toBeVisible();
+});
+```
+
+---
+
+## Benchmarking
+
+Performance benchmarks must run inside the full kernel:
+
+```bash
+# Note: Benchmarks are not automated
+make bench
+```
+
+This displays instructions:
+
+```
+=== AURORA OS Benchmarks ===
+Benchmarks must run inside QEMU with the full kernel.
+  1. Build: make iso
+  2. Boot:  make run
+  3. Run bench binaries from the shell inside the OS.
+See docs/testing.md for details.
+```
+
+<Note>
+In-kernel benchmarking tools are under development.
+</Note>
+
+---
+
+## Test Logs and Artifacts
+
+<Tabs>
+  <Tab title="Local">
+    Test artifacts are saved to:
+
+    ```
+    dist/
+    ├── test_runner        # Unit test binary
+    ├── boot-test.log      # QEMU boot output
+    └── playwright-report/ # Browser test results
+    ```
+  </Tab>
+
+  <Tab title="CI">
+    GitHub Actions saves:
+
+    - Test logs as workflow artifacts
+    - Coverage reports
+    - Crash dumps from fuzzing
+    - QEMU serial output
+
+    Download from the Actions tab.
+  </Tab>
+</Tabs>
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Unit Tests Fail to Compile">
+    Ensure include paths are correct:
+
+    ```bash
+    gcc -I kernel/src -I kernel/include \
+      tests/unit/kernel/test_harness.c -o dist/test_runner
+    ```
+  </Accordion>
+
+  <Accordion title="QEMU Boot Test Timeout">
+    Increase timeout in `tests/qemu/boot-test.sh`:
+
+    ```bash
+    # Change -timeout value
+    qemu-system-x86_64 ... -timeout 30
+    ```
+  </Accordion>
+
+  <Accordion title="Playwright Tests Hang">
+    Check if port 8080 is already in use:
+
+    ```bash
+    lsof -i :8080
+    # Kill conflicting process or change port in playwright.config.ts
+    ```
+  </Accordion>
+
+  <Accordion title="Fuzz Test Crashes">
+    This is expected! Check the crash artifact:
+
+    ```bash
+    # Crash inputs are saved to:
+    tests/fuzz/c/crash-*
+    
+    # Reproduce with:
+    ./fuzzer crash-[hash]
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Contributing" icon="code-pull-request" href="./contributing">
+    Learn how to submit your changes
+  </Card>
+  <Card title="Setup Guide" icon="wrench" href="./setup">
+    Review development environment setup
+  </Card>
+</CardGroup>

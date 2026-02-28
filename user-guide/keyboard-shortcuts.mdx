@@ -1,0 +1,433 @@
+---
+title: 'Keyboard Shortcuts'
+description: 'Master Aurora OS with comprehensive keyboard shortcuts for productivity'
+icon: 'keyboard'
+---
+
+## Overview
+
+Aurora OS is designed for keyboard-first navigation with comprehensive shortcuts across the entire system. Press `Shift + ?` anytime to display the interactive keyboard shortcuts overlay.
+
+<Note>
+  All shortcuts support both Windows/Linux (`Super`/`Win`) and macOS (`Cmd`) modifier keys
+</Note>
+
+## Essential Shortcuts
+
+The most frequently used shortcuts for daily productivity.
+
+<CardGroup cols={2}>
+  <Card title="Open Terminal" icon="terminal">
+    `Super + T` or `Cmd + T`
+  </Card>
+  <Card title="Open Files" icon="folder">
+    `Super + F` or `Cmd + F`
+  </Card>
+  <Card title="Open Browser" icon="globe">
+    `Super + B` or `Cmd + B`
+  </Card>
+  <Card title="Lock Screen" icon="lock">
+    `Super + L` or `Cmd + L`
+  </Card>
+</CardGroup>
+
+## Application Shortcuts
+
+Launch and manage applications quickly.
+
+### Launch Applications
+
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `Super + T` | Terminal | Open terminal emulator |
+| `Super + F` | Files | Open file manager |
+| `Super + B` | Browser | Open web browser |
+| `Super + E` | Text Editor | Open text editor |
+| `Super + ,` | Settings | Open system settings |
+| `Super + Space` | Spotlight | Open search/launcher |
+| `Cmd/Ctrl + N` | New | Create new (context-dependent) |
+
+### Window Management
+
+<Tabs>
+  <Tab title="Basic Controls">
+    | Shortcut | Action |
+    |----------|--------|
+    | `Ctrl + Q` | Close active window |
+    | `Cmd + M` | Minimize window |
+    | `Cmd + W` | Close tab/window |
+    | `Alt + Tab` | Switch windows |
+    | `Alt + Shift + Tab` | Reverse switch windows |
+    | `F11` | Toggle fullscreen |
+  </Tab>
+  <Tab title="Advanced WM">
+    | Shortcut | Action |
+    |----------|--------|
+    | `Super + D` | Show desktop (minimize all) |
+    | `F3` | Exposé view (show all windows) |
+    | `Super + Left` | Snap window left (50%) |
+    | `Super + Right` | Snap window right (50%) |
+    | `Super + Up` | Maximize window |
+    | `Super + Down` | Restore window size |
+  </Tab>
+</Tabs>
+
+<Tip>
+  Drag windows to screen edges for automatic snap zones: left/right for 50% split, corners for 25% quadrants
+</Tip>
+
+## Workspace & Desktop
+
+Manage virtual workspaces and desktop organization.
+
+### Workspace Switching
+
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `Super + 1` | Workspace 1 | Switch to workspace 1 |
+| `Super + 2` | Workspace 2 | Switch to workspace 2 |
+| `Super + 3` | Workspace 3 | Switch to workspace 3 |
+| `Super + 4` | Workspace 4 | Switch to workspace 4 |
+| `Ctrl + Left/Right` | Navigate | Previous/next workspace |
+
+### Desktop Management
+
+<Accordion title="Desktop Shortcuts">
+  - `Super + D` - Show desktop (minimize all windows)
+  - `F3` - Exposé view (mission control)
+  - `F4` - Application launcher
+  - `Super + Tab` - Application switcher
+  - `Shift + ?` - Show keyboard shortcuts overlay
+</Accordion>
+
+## System Controls
+
+Quick access to system functions and settings.
+
+### Power & Session
+
+| Shortcut | Action | Notes |
+|----------|--------|-------|
+| `Super + L` | Lock screen | Requires password to unlock |
+| `Ctrl + Alt + Delete` | Security menu | Power, lock, log out options |
+| `Super + Q` | Log out | Closes all apps and logs out |
+
+### Quick Settings
+
+<CardGroup cols={2}>
+  <Card title="Toggle WiFi" icon="wifi">
+    Access via Control Center (top-right) or `Fn + F2`
+  </Card>
+  <Card title="Toggle Bluetooth" icon="bluetooth">
+    Access via Control Center or `Fn + F3`
+  </Card>
+  <Card title="Brightness" icon="sun">
+    `Fn + F1` (down) / `Fn + F2` (up)
+  </Card>
+  <Card title="Volume" icon="volume-high">
+    `Fn + F10` (mute) / `Fn + F11` (down) / `Fn + F12` (up)
+  </Card>
+</CardGroup>
+
+## Terminal Shortcuts
+
+Efficient command-line navigation within the Terminal app.
+
+### Command Line Editing
+
+<Tabs>
+  <Tab title="Navigation">
+    | Shortcut | Action |
+    |----------|--------|
+    | `Ctrl + A` | Move to start of line |
+    | `Ctrl + E` | Move to end of line |
+    | `Ctrl + U` | Clear line before cursor |
+    | `Ctrl + K` | Clear line after cursor |
+    | `Ctrl + W` | Delete word before cursor |
+    | `Alt + Left/Right` | Move by word |
+  </Tab>
+  <Tab title="History">
+    | Shortcut | Action |
+    |----------|--------|
+    | `Up Arrow` | Previous command |
+    | `Down Arrow` | Next command |
+    | `Ctrl + R` | Reverse search history |
+    | `Ctrl + L` | Clear screen |
+    | `Tab` | Autocomplete file/dir |
+  </Tab>
+</Tabs>
+
+### Terminal Commands
+
+```bash
+# View all commands
+help
+
+# System info with shortcuts
+shortcuts
+
+# View command history
+history
+
+# Clear terminal
+clear  # or Ctrl + L
+```
+
+## File Manager Shortcuts
+
+Navigate and manage files efficiently in the Files app.
+
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `Cmd/Ctrl + N` | New Folder | Create new folder in current directory |
+| `Cmd/Ctrl + R` | Rename | Rename selected file or folder |
+| `Cmd/Ctrl + C` | Copy | Copy selected items |
+| `Cmd/Ctrl + X` | Cut | Cut selected items |
+| `Cmd/Ctrl + V` | Paste | Paste clipboard items |
+| `Delete` | Remove | Delete selected items |
+| `Cmd/Ctrl + A` | Select All | Select all items in view |
+| `Cmd/Ctrl + F` | Find | Search in current directory |
+| `Backspace` | Go Back | Navigate to parent directory |
+| `Cmd/Ctrl + 1` | Grid View | Switch to grid view |
+| `Cmd/Ctrl + 2` | List View | Switch to list view |
+
+<Note>
+  File operations respect the BPE/U security model and require appropriate permissions
+</Note>
+
+## Text Editor Shortcuts
+
+Code faster with editor shortcuts for the Text Editor app.
+
+### Editing
+
+<Accordion title="Basic Editing">
+  - `Cmd/Ctrl + S` - Save file
+  - `Cmd/Ctrl + Z` - Undo
+  - `Cmd/Ctrl + Shift + Z` - Redo
+  - `Cmd/Ctrl + F` - Find
+  - `Cmd/Ctrl + H` - Find and replace
+  - `Cmd/Ctrl + A` - Select all
+  - `Cmd/Ctrl + C` - Copy
+  - `Cmd/Ctrl + X` - Cut
+  - `Cmd/Ctrl + V` - Paste
+</Accordion>
+
+### Advanced
+
+<Accordion title="Advanced Editing">
+  - `Cmd/Ctrl + /` - Toggle comment
+  - `Cmd/Ctrl + ]` - Indent selection
+  - `Cmd/Ctrl + [` - Outdent selection
+  - `Cmd/Ctrl + D` - Duplicate line
+  - `Cmd/Ctrl + L` - Select line
+  - `Alt + Up/Down` - Move line up/down
+  - `Cmd/Ctrl + Shift + K` - Delete line
+</Accordion>
+
+## Browser Shortcuts
+
+Navigate the web efficiently in the Browser app.
+
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `Cmd/Ctrl + T` | New Tab | Open new browser tab |
+| `Cmd/Ctrl + W` | Close Tab | Close current tab |
+| `Cmd/Ctrl + Shift + T` | Reopen Tab | Reopen last closed tab |
+| `Cmd/Ctrl + L` | Address Bar | Focus URL address bar |
+| `Cmd/Ctrl + R` | Refresh | Reload current page |
+| `Cmd/Ctrl + Shift + R` | Hard Refresh | Clear cache and reload |
+| `Alt + Left` | Back | Navigate back |
+| `Alt + Right` | Forward | Navigate forward |
+| `Cmd/Ctrl + +` | Zoom In | Increase page zoom |
+| `Cmd/Ctrl + -` | Zoom Out | Decrease page zoom |
+| `Cmd/Ctrl + 0` | Reset Zoom | Reset zoom to 100% |
+| `Cmd/Ctrl + Tab` | Next Tab | Switch to next tab |
+| `Cmd/Ctrl + Shift + Tab` | Previous Tab | Switch to previous tab |
+
+## Enhanced App Shortcuts
+
+Shortcuts for the new enhanced applications.
+
+### Notes App
+
+<CardGroup cols={2}>
+  <Card title="New Note" icon="plus">
+    `Cmd/Ctrl + N` - Create new note
+  </Card>
+  <Card title="Delete Note" icon="trash">
+    `Cmd/Ctrl + Backspace` - Delete current note
+  </Card>
+  <Card title="Search" icon="magnifying-glass">
+    `Cmd/Ctrl + F` - Search notes
+  </Card>
+  <Card title="Switch Note" icon="arrow-right">
+    `Cmd/Ctrl + Up/Down` - Navigate notes
+  </Card>
+</CardGroup>
+
+### Tasks App
+
+| Shortcut | Action |
+|----------|--------|
+| `Enter` | Add task (when input focused) |
+| `Space` | Toggle task completion |
+| `Delete` | Remove task |
+| `Tab` | Focus next task |
+
+### Music Player
+
+<Accordion title="Playback Controls">
+  - `Space` - Play/pause
+  - `Left Arrow` - Previous track
+  - `Right Arrow` - Next track
+  - `Up Arrow` - Volume up
+  - `Down Arrow` - Volume down
+  - `M` - Mute/unmute
+</Accordion>
+
+## Accessibility Shortcuts
+
+Shortcuts to enhance accessibility and ease of use.
+
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `Shift + ?` | Help | Show keyboard shortcuts overlay |
+| `Cmd/Ctrl + Plus` | Zoom In | Increase UI scale |
+| `Cmd/Ctrl + Minus` | Zoom Out | Decrease UI scale |
+| `Cmd/Ctrl + 0` | Reset Zoom | Reset UI to 100% |
+| `Alt + Shift + K` | High Contrast | Toggle high contrast mode |
+| `Ctrl + Alt + R` | Reduced Motion | Toggle animation reduction |
+
+<Tip>
+  Aurora OS respects browser preferences for `prefers-reduced-motion` and `prefers-contrast`
+</Tip>
+
+## Custom Shortcuts
+
+Define custom shortcuts in Settings → Keyboard.
+
+### Creating Custom Shortcuts
+
+1. Open Settings → Keyboard → Shortcuts
+2. Click "Add Custom Shortcut"
+3. Enter command or action
+4. Press desired key combination
+5. Save and test
+
+<Note>
+  Custom shortcuts are stored in localStorage and synced across sessions
+</Note>
+
+## Terminal Command Shortcuts
+
+Quick commands for common operations in Terminal.
+
+```bash
+# System shortcuts
+shortcuts     # Display keyboard shortcuts overlay
+desktop       # Show desktop
+tile          # Tile all windows
+cascade       # Cascade windows
+screenshot    # Capture screenshot
+expo          # Toggle Exposé view
+
+# GPU effects
+gpu on        # Enable GPU compositor
+gpu off       # Disable GPU compositor
+gpu rain      # Enable rain effect
+gpu snow      # Enable snow effect
+gpu crt       # Toggle CRT effect
+
+# App store
+store list    # List available apps
+store search weather  # Search apps
+store install notes   # Install app
+store run music       # Launch app
+
+# File operations
+open terminal # Open Terminal app
+open files    # Open Files app
+open weather  # Open Weather app
+```
+
+## Keyboard Shortcuts Overlay
+
+Press `Shift + ?` anywhere in Aurora OS to display the interactive shortcuts overlay.
+
+### Overlay Features
+
+- **Categorized**: Shortcuts grouped by function (System, Apps, Window Management)
+- **Searchable**: Filter shortcuts by typing
+- **Visual**: Shows keyboard layout with highlighted keys
+- **Contextual**: Displays relevant shortcuts for active app
+- **Printable**: Export shortcuts as PDF or text
+
+<Tip>
+  The overlay updates dynamically based on the active application and context
+</Tip>
+
+## Cheat Sheet
+
+Quick reference card for essential shortcuts:
+
+<CardGroup cols={2}>
+  <Card title="Launch" icon="rocket">
+    - Terminal: `Super + T`
+    - Files: `Super + F`
+    - Browser: `Super + B`
+    - Search: `Super + Space`
+  </Card>
+  <Card title="Window" icon="window-restore">
+    - Close: `Ctrl + Q`
+    - Minimize: `Cmd + M`
+    - Desktop: `Super + D`
+    - Exposé: `F3`
+  </Card>
+  <Card title="System" icon="gear">
+    - Lock: `Super + L`
+    - Settings: `Super + ,`
+    - Help: `Shift + ?`
+    - Fullscreen: `F11`
+  </Card>
+  <Card title="Terminal" icon="terminal">
+    - Clear: `Ctrl + L`
+    - History: `Up/Down`
+    - Complete: `Tab`
+    - Kill: `Ctrl + C`
+  </Card>
+</CardGroup>
+
+## Tips for Efficiency
+
+1. **Learn incrementally**: Master 5-10 shortcuts per week
+2. **Use Spotlight**: `Super + Space` is fastest for launching anything
+3. **Terminal power**: Combine keyboard shortcuts with shell commands
+4. **Workspace organization**: Use `Super + 1-4` for context switching
+5. **Window management**: Master snap zones for efficient multitasking
+
+<Note>
+  Practice shortcuts in the Shortcuts Training mode (Settings → Keyboard → Training)
+</Note>
+
+## Platform Differences
+
+### macOS
+- Use `Cmd` instead of `Super`/`Win`
+- `Option` instead of `Alt` for some shortcuts
+- Native macOS shortcuts are preserved where possible
+
+### Windows/Linux
+- Use `Super`/`Win` or `Ctrl` depending on context
+- `Alt` for window management
+- Consistent with platform conventions
+
+### Browser Conflicts
+
+Some shortcuts may conflict with browser defaults:
+
+- `Ctrl + W` - May close browser tab instead of app window
+- `Ctrl + T` - May open browser tab instead of Terminal
+- `F11` - May toggle browser fullscreen
+
+**Solution**: Run Aurora OS in fullscreen mode (`F11`) or as a Progressive Web App (PWA) to avoid conflicts.

@@ -1,0 +1,428 @@
+---
+title: "Package Specification"
+description: "App manifest format and package structure for Aurora OS applications"
+---
+
+## Overview
+
+Each Aurora OS app is a self-contained JavaScript object with metadata and an executable `run()` function. Apps are embedded in the `STORE_CATALOG` array and execute directly in the browser runtime.
+
+<Info>
+  Unlike traditional package managers, Aurora OS apps are **function-based** rather than file-based, making them extremely lightweight and instant to install.
+</Info>
+
+## App Manifest Format
+
+Every app in the store catalog must provide the following fields:
+
+### Required Fields
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the app (e.g., `clock-app`, `notes-app`). Must be unique across all apps in the catalog. Used for installation tracking and window management.
+  
+  <CodeGroup>
+  ```javascript Valid IDs
+  id: 'clock-app'
+  id: 'weather-app'
+  id: 'notes-app'
+  ```
+  
+  ```javascript Invalid IDs
+  id: 'Clock App'  // No spaces
+  id: 'clock'      // Missing -app suffix convention
+  ```
+  </CodeGroup>
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Human-readable display name shown in the App Store, launcher, and window title bar.
+  
+  ```javascript
+  name: 'World Clock'
+  name: 'Sticky Notes'
+  name: 'Aurora Paint'
+  ```
+</ParamField>
+
+<ParamField path="icon" type="string" required>
+  Icon key from the `ICONS` SVG registry. Must match a key in the global ICONS object.
+  
+  ```javascript Available Icons
+  icon: 'clock'      // Clock icon
+  icon: 'note'       // Note/document icon
+  icon: 'palette'    // Paint palette icon
+  icon: 'weather'    // Cloud/weather icon
+  icon: 'game'       // Game controller icon
+  icon: 'music'      // Music note icon
+  // See os.js ICONS object for full list
+  ```
+</ParamField>
+
+<ParamField path="color" type="string" required>
+  CSS gradient for icon background in the App Store and launcher. Typically a linear gradient with dark tones.
+  
+  ```javascript
+  color: 'linear-gradient(135deg,#1a2040,#0d1530)'
+  color: 'linear-gradient(135deg,#3a3a10,#2a2a08)'
+  color: 'linear-gradient(135deg,#301a40,#200e30)'
+  ```
+</ParamField>
+
+<ParamField path="cat" type="string" required>
+  Category for organization and filtering. Must be one of: `Utilities`, `Productivity`, `Creative`, `Entertainment`, `Games`.
+  
+  ```javascript
+  cat: 'Utilities'
+  cat: 'Productivity'
+  cat: 'Creative'
+  cat: 'Entertainment'
+  cat: 'Games'
+  ```
+</ParamField>
+
+<ParamField path="size" type="string" required>
+  Approximate bundle size as a human-readable string. Used for display purposes only.
+  
+  ```javascript
+  size: '2 KB'
+  size: '3 KB'
+  size: '4 KB'
+  ```
+</ParamField>
+
+<ParamField path="rating" type="number" required>
+  Star rating from 1.0 to 5.0. Displayed in the App Store as filled/empty stars.
+  
+  ```javascript
+  rating: 4.5  // 4.5 stars
+  rating: 4.2  // 4.2 stars
+  rating: 4.8  // 4.8 stars
+  ```
+</ParamField>
+
+<ParamField path="desc" type="string" required>
+  Short description (1-2 sentences) shown in the App Store card.
+  
+  ```javascript
+  desc: 'Multiple timezone clocks with analog display.'
+  desc: 'Quick sticky notes saved locally.'
+  desc: 'Drawing canvas with brush, eraser, shapes, fill, undo/redo.'
+  ```
+</ParamField>
+
+<ParamField path="run" type="function" required>
+  App entry point function that creates the app window and initializes the app. Called when user launches the app.
+  
+  ```javascript
+  run() {
+    // Create window with createWindow(id, title, w, h, x, y, bodyHTML, icon)
+    const el = createWindow('clock-app', 'World Clock', 480, 340, 200, 60, html, 'clock');
+    
+    // Initialize app logic, event handlers, intervals, etc.
+    function tick() {
+      // Update UI
+    }
+    const interval = setInterval(tick, 1000);
+    
+    // Clean up on window close
+    const obs = new MutationObserver(() => {
+      if (!document.getElementById('win-clock-app')) {
+        clearInterval(interval);
+        obs.disconnect();
+      }
+    });
+    obs.observe(document.getElementById('workspace'), {childList: true});
+  }
+  ```
+</ParamField>
+
+## Complete Example
+
+Here's a complete app manifest for the World Clock app:
+
+```javascript World Clock App
+{
+  id: 'clock-app',
+  name: 'World Clock',
+  icon: 'clock',
+  color: 'linear-gradient(135deg,#1a2040,#0d1530)',
+  cat: 'Utilities',
+  size: '2 KB',
+  rating: 4.5,
+  desc: 'Multiple timezone clocks with analog display.',
+  
+  run() {
+    const zones = ['America/New_York', 'Europe/London', 'Asia/Tokyo', 'Australia/Sydney', 'Asia/Kolkata'];
+    let html = '<div class="sapp-clock-wrap">';
+    
+    zones.forEach(z => {
+      const label = z.split('/').pop().replace('_', ' ');
+      html += `<div class="sapp-clock-card">
+        <div class="sapp-clock-face" data-tz="${z}"></div>
+        <div class="sapp-clock-label">${label}</div>
+        <div class="sapp-clock-time" data-tz="${z}"></div>
+      </div>`;
+    });
+    html += '</div>';
+    
+    const el = createWindow('clock-app', 'World Clock', 480, 340, 200, 60, html, 'clock');
+    if (!el) return;
+    
+    function tick() {
+      el.querySelectorAll('.sapp-clock-time[data-tz]').forEach(e => {
+        try {
+          e.textContent = new Date().toLocaleTimeString([], {
+            timeZone: e.dataset.tz,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          });
+        } catch(x) {
+          e.textContent = '--:--';
+        }
+      });
+      
+      // Draw analog clock faces with SVG
+      el.querySelectorAll('.sapp-clock-face[data-tz]').forEach(cv => {
+        try {
+          const d = new Date(new Date().toLocaleString('en-US', {timeZone: cv.dataset.tz}));
+          const h = d.getHours() % 12, m = d.getMinutes(), s = d.getSeconds();
+          
+          cv.innerHTML = `<svg viewBox="0 0 100 100">
+            <circle cx="50" cy="50" r="45" fill="none" stroke="var(--panel-border)" stroke-width="2"/>
+            <!-- Hour markers -->
+            ${[1,2,3,4,5,6,7,8,9,10,11,12].map(n => {
+              const a = (n * 30 - 90) * Math.PI / 180;
+              return `<text x="${50 + 35 * Math.cos(a)}" y="${50 + 35 * Math.sin(a) + 4}" 
+                text-anchor="middle" fill="var(--muted)" font-size="8">${n}</text>`;
+            }).join('')}
+            <!-- Hour hand -->
+            <line x1="50" y1="50" 
+              x2="${50 + 22 * Math.cos(((h + m/60) * 30 - 90) * Math.PI / 180)}" 
+              y2="${50 + 22 * Math.sin(((h + m/60) * 30 - 90) * Math.PI / 180)}" 
+              stroke="var(--text)" stroke-width="2.5" stroke-linecap="round"/>
+            <!-- Minute hand -->
+            <line x1="50" y1="50" 
+              x2="${50 + 32 * Math.cos((m * 6 - 90) * Math.PI / 180)}" 
+              y2="${50 + 32 * Math.sin((m * 6 - 90) * Math.PI / 180)}" 
+              stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round"/>
+            <!-- Second hand -->
+            <line x1="50" y1="50" 
+              x2="${50 + 36 * Math.cos((s * 6 - 90) * Math.PI / 180)}" 
+              y2="${50 + 36 * Math.sin((s * 6 - 90) * Math.PI / 180)}" 
+              stroke="var(--danger)" stroke-width="0.8" stroke-linecap="round"/>
+            <circle cx="50" cy="50" r="2" fill="var(--text)"/>
+          </svg>`;
+        } catch(x) {}
+      });
+    }
+    
+    tick();
+    const iv = setInterval(tick, 1000);
+    
+    // Clean up interval when window is closed
+    const obs = new MutationObserver(() => {
+      if (!document.getElementById('win-clock-app')) {
+        clearInterval(iv);
+        obs.disconnect();
+      }
+    });
+    obs.observe(document.getElementById('workspace'), {childList: true});
+  }
+}
+```
+
+## App Development Patterns
+
+### Window Creation
+
+Use the global `createWindow()` function to create app windows:
+
+```javascript createWindow API
+function createWindow(
+  id,        // Window/app ID (must match app.id)
+  title,     // Window title
+  w,         // Width in pixels
+  h,         // Height in pixels
+  x,         // X position
+  y,         // Y position
+  bodyHTML,  // Initial HTML content
+  iconName   // Icon key from ICONS
+) {
+  // Returns the window body element or null
+}
+```
+
+### State Persistence
+
+Apps can persist data using localStorage with their own keys:
+
+```javascript localStorage Pattern
+// Save app data
+const notes = [{id: 1, text: 'Hello', color: '#f6b84b'}];
+localcastStorage.setItem('aurora-notes', JSON.stringify(notes));
+
+// Load app data
+const saved = JSON.parse(localStorage.getItem('aurora-notes') || '[]');
+
+// Convention: prefix keys with 'aurora-' and app name
+localStorage.setItem('aurora-tasks', JSON.stringify(tasks));
+localStorage.setItem('aurora-snake-hi', JSON.stringify(highScores));
+```
+
+### Cleanup on Window Close
+
+Always clean up intervals, listeners, and resources when the window closes:
+
+```javascript Cleanup Pattern
+const interval = setInterval(tick, 1000);
+const audioContext = new AudioContext();
+
+// Use MutationObserver to detect window removal
+const observer = new MutationObserver(() => {
+  if (!document.getElementById('win-' + appId)) {
+    // Window was closed - clean up
+    clearInterval(interval);
+    audioContext.close();
+    observer.disconnect();
+  }
+});
+
+observer.observe(document.getElementById('workspace'), {
+  childList: true
+});
+```
+
+### Dynamic Rendering
+
+Apps can re-render their UI dynamically:
+
+```javascript Dynamic Rendering
+function render() {
+  const body = wins['notes-app']?.el.querySelector('.window-body');
+  if (!body) return;
+  
+  body.innerHTML = `
+    <div class="sapp-notes-toolbar">
+      <button onclick="addNote()">+ New Note</button>
+    </div>
+    <div class="sapp-notes-grid">
+      ${notes.map(n => `
+        <div class="sapp-note-card" style="background:${n.color}20">
+          <textarea onchange="editNote(${n.id}, this.value)">${n.text}</textarea>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+// Call render() whenever state changes
+function addNote() {
+  notes.push({id: Date.now(), text: '', color: '#f6b84b'});
+  saveNotes();
+  render();
+}
+```
+
+### Global Functions
+
+Apps can expose global functions for event handlers:
+
+```javascript Global Functions
+// Define functions on window object
+window.storeAppAddNote = () => {
+  notes.push({id: Date.now(), text: '', color: '#f6b84b'});
+  saveNotes();
+  render();
+};
+
+window.storeAppDeleteNote = (id) => {
+  const idx = notes.findIndex(n => n.id === id);
+  if (idx >= 0) {
+    notes.splice(idx, 1);
+    saveNotes();
+    render();
+  }
+};
+
+// Reference in HTML
+body.innerHTML = `
+  <button onclick="storeAppAddNote()">Add Note</button>
+  <button onclick="storeAppDeleteNote(${noteId})">Delete</button>
+`;
+```
+
+## App Categories
+
+### Utilities
+
+System tools and utilities that enhance productivity:
+
+- World Clock (multi-timezone clocks)
+- Weather (forecast display)
+- Image Viewer (zoom, pan, slideshow)
+
+### Productivity
+
+Work-focused applications:
+
+- Sticky Notes (persistent notes with colors)
+- Tasks (todo list with checkboxes)
+- Pomodoro Timer (focus/break intervals)
+
+### Creative
+
+Design and creation tools:
+
+- Aurora Paint (canvas drawing with brush, shapes, fill, undo/redo)
+
+### Entertainment
+
+Media and relaxation apps:
+
+- Aurora Radio (ambient sound generator with FFT visualizer)
+
+### Games
+
+Lightweight browser games:
+
+- Snake (classic game with speed levels and high scores)
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Keep Apps Lightweight" icon="feather">
+    Target 2-4 KB per app. Use inline styles and minimal dependencies.
+  </Card>
+  
+  <Card title="Use Semantic IDs" icon="tag">
+    Follow the `app-name-app` pattern (e.g., `clock-app`, `notes-app`).
+  </Card>
+  
+  <Card title="Persist User Data" icon="database">
+    Save user state to localStorage so data survives page reload.
+  </Card>
+  
+  <Card title="Clean Up Resources" icon="broom">
+    Always clear intervals, close audio contexts, and remove listeners on window close.
+  </Card>
+  
+  <Card title="Provide Visual Feedback" icon="bell">
+    Use notifications for important actions (save, delete, error).
+  </Card>
+  
+  <Card title="Support Theme System" icon="palette">
+    Use CSS variables (`var(--accent)`, `var(--text)`) for theme compatibility.
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Repository Spec" icon="database" href="/api/package-manager/repository-spec">
+    Learn about the catalog structure and repository model
+  </Card>
+  <Card title="Overview" icon="book" href="/api/package-manager/overview">
+    Return to Package Manager overview
+  </Card>
+</CardGroup>

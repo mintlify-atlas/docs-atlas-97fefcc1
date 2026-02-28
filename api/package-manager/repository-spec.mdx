@@ -1,0 +1,563 @@
+---
+title: "Repository Specification"
+description: "Package repository structure and catalog management for Aurora OS"
+---
+
+## Overview
+
+The Aurora OS browser runtime uses an embedded app catalog (`STORE_CATALOG` array in `os.js`). This is a **client-side repository** — no server required for the PWA deployment. All apps are bundled with the OS and installed on-demand.
+
+<Info>
+  The embedded catalog model makes Aurora OS work completely offline as a Progressive Web App, with instant app installations requiring no network requests.
+</Info>
+
+## Repository Model
+
+### Embedded Catalog
+
+The `STORE_CATALOG` is a JavaScript array containing all available apps:
+
+```javascript Store Catalog Structure
+const STORE_CATALOG = [
+  {
+    id: 'clock-app',
+    name: 'World Clock',
+    icon: 'clock',
+    color: 'linear-gradient(135deg,#1a2040,#0d1530)',
+    cat: 'Utilities',
+    size: '2 KB',
+    rating: 4.5,
+    desc: 'Multiple timezone clocks with analog display.',
+    run: function() { /* ... */ }
+  },
+  {
+    id: 'weather-app',
+    name: 'Weather',
+    icon: 'weather',
+    color: 'linear-gradient(135deg,#1a3050,#0d2040)',
+    cat: 'Utilities',
+    size: '3 KB',
+    rating: 4.2,
+    desc: 'Local weather display with forecast.',
+    run: function() { /* ... */ }
+  },
+  // ... more apps
+];
+```
+
+### Installation State
+
+Installed apps are tracked in localStorage:
+
+```javascript Installation Tracking
+const installedApps = JSON.parse(
+  localStorage.getItem('aurora-installed-apps') || '[]'
+);
+// Example: ['clock-app', 'notes-app', 'todo-app']
+
+function isInstalled(id) {
+  return installedApps.includes(id);
+}
+```
+
+### Runtime Registry
+
+On boot, installed apps are merged into the `APPS` array:
+
+```javascript Boot-time Synchronization
+STORE_CATALOG.forEach(a => {
+  if (isInstalled(a.id) && !APPS.find(x => x.id === a.id)) {
+    APPS.push({
+      id: a.id,
+      name: a.name,
+      icon: a.icon,
+      color: a.color,
+      action: a.run
+    });
+  }
+});
+```
+
+## Catalog Structure
+
+Each catalog entry is a complete app manifest:
+
+<ParamField path="id" type="string" required>
+  Unique package identifier (e.g., `clock-app`, `notes-app`)
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Human-readable app name (e.g., `World Clock`, `Sticky Notes`)
+</ParamField>
+
+<ParamField path="icon" type="string" required>
+  Key into ICONS SVG registry (e.g., `clock`, `note`, `palette`)
+</ParamField>
+
+<ParamField path="color" type="string" required>
+  CSS gradient for icon background
+  
+  ```javascript
+  color: 'linear-gradient(135deg,#1a2040,#0d1530)'
+  ```
+</ParamField>
+
+<ParamField path="cat" type="string" required>
+  Category: `Utilities`, `Productivity`, `Creative`, `Entertainment`, or `Games`
+</ParamField>
+
+<ParamField path="size" type="string" required>
+  Approximate bundle size (e.g., `2 KB`, `4 KB`)
+</ParamField>
+
+<ParamField path="rating" type="number" required>
+  Star rating from 1.0 to 5.0
+</ParamField>
+
+<ParamField path="desc" type="string" required>
+  Short description for the App Store card
+</ParamField>
+
+<ParamField path="run" type="function" required>
+  App entry point that creates window and initializes app
+</ParamField>
+
+## Category System
+
+Apps are organized into five categories for browsing and filtering:
+
+<ResponseField name="Utilities" type="category">
+  **Purpose:** System tools (clocks, weather, etc.)
+  
+  **Examples:** World Clock, Weather, Image Viewer
+  
+  **Typical Use:** Enhance OS functionality with utility apps
+</ResponseField>
+
+<ResponseField name="Productivity" type="category">
+  **Purpose:** Work tools (notes, tasks, timers)
+  
+  **Examples:** Sticky Notes, Tasks, Pomodoro Timer
+  
+  **Typical Use:** Task management and focus enhancement
+</ResponseField>
+
+<ResponseField name="Creative" type="category">
+  **Purpose:** Drawing and design tools
+  
+  **Examples:** Aurora Paint
+  
+  **Typical Use:** Digital art and creative expression
+</ResponseField>
+
+<ResponseField name="Entertainment" type="category">
+  **Purpose:** Media and ambient sounds
+  
+  **Examples:** Aurora Radio
+  
+  **Typical Use:** Relaxation and background ambience
+</ResponseField>
+
+<ResponseField name="Games" type="category">
+  **Purpose:** Lightweight browser games
+  
+  **Examples:** Snake
+  
+  **Typical Use:** Quick gaming sessions
+</ResponseField>
+
+### Category Distribution
+
+The current catalog contains:
+
+```javascript Category Breakdown
+const categories = [...new Set(STORE_CATALOG.map(a => a.cat))];
+// Returns: ['Utilities', 'Productivity', 'Creative', 'Entertainment', 'Games']
+
+// Count by category
+Utilities:      3 apps  (World Clock, Weather, Image Viewer)
+Productivity:   3 apps  (Sticky Notes, Tasks, Pomodoro Timer)
+Creative:       1 app   (Aurora Paint)
+Entertainment:  1 app   (Aurora Radio)
+Games:          1 app   (Snake)
+```
+
+## Installation Flow
+
+When a user installs an app from the catalog:
+
+<Steps>
+  <Step title="Check Installation Status">
+    Verify the app is not already installed by checking `installedApps.includes(id)`.
+  </Step>
+  
+  <Step title="Add to Installed List">
+    Push app ID to the `installedApps` array in memory.
+    
+    ```javascript
+    installedApps.push(id);
+    ```
+  </Step>
+  
+  <Step title="Persist to Storage">
+    Serialize and save the updated array to localStorage.
+    
+    ```javascript
+    localStorage.setItem('aurora-installed-apps', JSON.stringify(installedApps));
+    ```
+  </Step>
+  
+  <Step title="Register in Runtime">
+    Find the app in `STORE_CATALOG` and add it to the `APPS` runtime registry.
+    
+    ```javascript
+    const app = STORE_CATALOG.find(a => a.id === id);
+    if (app) {
+      APPS.push({
+        id: app.id,
+        name: app.name,
+        icon: app.icon,
+        color: app.color,
+        action: app.run
+      });
+    }
+    ```
+  </Step>
+  
+  <Step title="Show Notification">
+    Display a success notification to the user.
+    
+    ```javascript
+    notify('Installed', `${app.name} installed successfully`, 'download', 'var(--success)');
+    ```
+  </Step>
+</Steps>
+
+### Complete Installation Function
+
+```javascript installApp Implementation
+function installApp(id) {
+  // Skip if already installed
+  if (!isInstalled(id)) {
+    // Add to installed list
+    installedApps.push(id);
+    
+    // Persist to localStorage
+    localStorage.setItem('aurora-installed-apps', JSON.stringify(installedApps));
+    
+    // Find app in catalog
+    const app = STORE_CATALOG.find(a => a.id === id);
+    
+    // Register in runtime
+    if (app) {
+      APPS.push({
+        id: app.id,
+        name: app.name,
+        icon: app.icon,
+        color: app.color,
+        action: app.run
+      });
+    }
+    
+    // Notify user
+    notify('Installed', `${app?.name || id} installed successfully`, 'download', 'var(--success)');
+  }
+}
+```
+
+## Uninstallation Flow
+
+When a user removes an app:
+
+<Steps>
+  <Step title="Remove from Installed List">
+    Find and remove the app ID from `installedApps`.
+    
+    ```javascript
+    const idx = installedApps.indexOf(id);
+    if (idx >= 0) {
+      installedApps.splice(idx, 1);
+    }
+    ```
+  </Step>
+  
+  <Step title="Update Storage">
+    Save the updated list to localStorage.
+    
+    ```javascript
+    localStorage.setItem('aurora-installed-apps', JSON.stringify(installedApps));
+    ```
+  </Step>
+  
+  <Step title="Unregister from Runtime">
+    Remove the app from the `APPS` array.
+    
+    ```javascript
+    const ai = APPS.findIndex(a => a.id === id);
+    if (ai >= 0) {
+      APPS.splice(ai, 1);
+    }
+    ```
+  </Step>
+  
+  <Step title="Close Open Windows">
+    If the app window is currently open, close it.
+    
+    ```javascript
+    if (wins[id]) {
+      closeWindow(id);
+    }
+    ```
+  </Step>
+  
+  <Step title="Show Notification">
+    Confirm the removal to the user.
+    
+    ```javascript
+    notify('Removed', 'App removed', 'trash', 'var(--muted)');
+    ```
+  </Step>
+</Steps>
+
+### Complete Uninstallation Function
+
+```javascript uninstallApp Implementation
+function uninstallApp(id) {
+  // Remove from installed list
+  const idx = installedApps.indexOf(id);
+  if (idx >= 0) {
+    installedApps.splice(idx, 1);
+    localStorage.setItem('aurora-installed-apps', JSON.stringify(installedApps));
+  }
+  
+  // Remove from runtime registry
+  const ai = APPS.findIndex(a => a.id === id);
+  if (ai >= 0) {
+    APPS.splice(ai, 1);
+  }
+  
+  // Close window if open
+  if (wins[id]) {
+    closeWindow(id);
+  }
+  
+  // Notify user
+  notify('Removed', 'App removed', 'trash', 'var(--muted)');
+}
+```
+
+## Catalog Queries
+
+The App Store UI performs various queries on the catalog:
+
+### List All Apps
+
+```javascript
+const allApps = STORE_CATALOG;
+```
+
+### Filter by Category
+
+```javascript
+const utilities = STORE_CATALOG.filter(a => a.cat === 'Utilities');
+const productivity = STORE_CATALOG.filter(a => a.cat === 'Productivity');
+```
+
+### Filter by Installation Status
+
+```javascript
+const installed = STORE_CATALOG.filter(a => isInstalled(a.id));
+const available = STORE_CATALOG.filter(a => !isInstalled(a.id));
+```
+
+### Search by Name or Description
+
+```javascript
+function searchApps(query) {
+  const q = query.toLowerCase();
+  return STORE_CATALOG.filter(a => 
+    a.name.toLowerCase().includes(q) || 
+    a.desc.toLowerCase().includes(q)
+  );
+}
+```
+
+### Get App by ID
+
+```javascript
+function getApp(id) {
+  return STORE_CATALOG.find(a => a.id === id);
+}
+```
+
+## CLI Integration
+
+The terminal `store` command interacts with the catalog:
+
+```javascript Terminal Store Command
+store: (args) => {
+  if (!args[0]) return 'Usage: store list | store install <app> | store remove <app> | store run <app>';
+  
+  // List all apps with install status
+  if (args[0] === 'list') {
+    return STORE_CATALOG.map(x => 
+      `${isInstalled(x.id) ? '[✓]' : '[ ]'} ${x.id.padEnd(16)} ${x.name.padEnd(18)} ${x.cat}`
+    ).join('\n');
+  }
+  
+  // Search apps
+  if (args[0] === 'search' && args[1]) {
+    return STORE_CATALOG
+      .filter(x => 
+        x.name.toLowerCase().includes(args[1].toLowerCase()) || 
+        x.id.includes(args[1])
+      )
+      .map(x => `${isInstalled(x.id) ? '[✓]' : '[ ]'} ${x.id.padEnd(16)} ${x.name}`)
+      .join('\n') || 'No apps found';
+  }
+  
+  // Install app
+  if (args[0] === 'install' && args[1]) {
+    const app = STORE_CATALOG.find(x => x.id === args[1] || x.id === args[1] + '-app');
+    if (!app) return `store: package '${args[1]}' not found`;
+    if (isInstalled(app.id)) return `${app.name} is already installed`;
+    installApp(app.id);
+    return `Installed ${app.name} (${app.size})`;
+  }
+  
+  // Remove app
+  if (args[0] === 'remove' && args[1]) {
+    const app = STORE_CATALOG.find(x => x.id === args[1] || x.id === args[1] + '-app');
+    if (!app) return `store: package '${args[1]}' not found`;
+    if (!isInstalled(app.id)) return `${app.name} is not installed`;
+    uninstallApp(app.id);
+    return `Removed ${app.name}`;
+  }
+  
+  // Run app
+  if (args[0] === 'run' && args[1]) {
+    const app = STORE_CATALOG.find(x => x.id === args[1] || x.id === args[1] + '-app');
+    if (!app) return `store: package '${args[1]}' not found`;
+    if (!isInstalled(app.id)) return `${app.name} is not installed. Run: store install ${app.id}`;
+    app.run();
+    return `Launching ${app.name}...`;
+  }
+  
+  return 'Usage: store list | store install <app> | store remove <app> | store run <app>';
+}
+```
+
+## Current Catalog Contents
+
+The embedded catalog contains 9 apps:
+
+<CodeGroup>
+```javascript Utilities (3 apps)
+[
+  { id: 'clock-app', name: 'World Clock', size: '2 KB', rating: 4.5 },
+  { id: 'weather-app', name: 'Weather', size: '3 KB', rating: 4.2 },
+  { id: 'imgview-app', name: 'Image Viewer', size: '2 KB', rating: 4.2 }
+]
+```
+
+```javascript Productivity (3 apps)
+[
+  { id: 'notes-app', name: 'Sticky Notes', size: '2 KB', rating: 4.7 },
+  { id: 'todo-app', name: 'Tasks', size: '2 KB', rating: 4.6 },
+  { id: 'pomodoro-app', name: 'Pomodoro Timer', size: '2 KB', rating: 4.4 }
+]
+```
+
+```javascript Creative (1 app)
+[
+  { id: 'paint-app', name: 'Aurora Paint', size: '4 KB', rating: 4.3 }
+]
+```
+
+```javascript Entertainment (1 app)
+[
+  { id: 'music-app', name: 'Aurora Radio', size: '3 KB', rating: 4.0 }
+]
+```
+
+```javascript Games (1 app)
+[
+  { id: 'game-app', name: 'Snake', size: '3 KB', rating: 4.8 }
+]
+```
+</CodeGroup>
+
+## Future: Remote Repository
+
+For native Aurora OS (beyond the browser runtime), a remote package repository will be implemented:
+
+<Note>
+  The remote repository will use the package server at `/userland/pkg-server/` to serve signed packages over HTTPS with TUF-compliant metadata for secure updates.
+</Note>
+
+### Planned Remote Features
+
+<CardGroup cols={2}>
+  <Card title="Signed Packages" icon="shield-check">
+    Packages signed with cryptographic signatures for authenticity verification
+  </Card>
+  
+  <Card title="TUF Metadata" icon="file-signature">
+    The Update Framework (TUF) for secure, resilient package updates
+  </Card>
+  
+  <Card title="HTTPS Delivery" icon="lock">
+    Secure package delivery over encrypted connections
+  </Card>
+  
+  <Card title="Remote Manifest" icon="cloud">
+    Fetch catalog from remote JSON manifest instead of embedded array
+  </Card>
+</CardGroup>
+
+### Migration Path
+
+The browser runtime catalog can be extended to support remote repositories:
+
+```javascript Remote Catalog Extension
+// Current: embedded catalog
+const STORE_CATALOG = [ /* apps */ ];
+
+// Future: remote catalog
+async function fetchCatalog() {
+  const response = await fetch('https://packages.aurora-os.dev/catalog.json');
+  const remoteCatalog = await response.json();
+  
+  // Verify signatures
+  for (const app of remoteCatalog) {
+    if (!verifySignature(app)) {
+      console.warn(`Invalid signature for ${app.id}`);
+      continue;
+    }
+    STORE_CATALOG.push(app);
+  }
+}
+```
+
+## Repository Statistics
+
+```javascript Catalog Metrics
+Total Apps:          9
+Total Categories:    5
+Average Rating:      4.4 stars
+Average Size:        2.4 KB
+Smallest App:        2 KB (multiple)
+Largest App:         4 KB (Aurora Paint)
+Highest Rated:       4.8 stars (Snake)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Package Spec" icon="file-code" href="/api/package-manager/package-spec">
+    Learn about the app manifest format and development patterns
+  </Card>
+  <Card title="Overview" icon="book" href="/api/package-manager/overview">
+    Return to Package Manager overview
+  </Card>
+</CardGroup>

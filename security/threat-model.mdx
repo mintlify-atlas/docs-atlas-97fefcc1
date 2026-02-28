@@ -1,0 +1,371 @@
+---
+title: Threat Model
+description: Aurora OS formal threat model, attack surfaces, and security assumptions
+---
+
+Aurora OS threat model defines the security boundaries, attack surfaces, and trust assumptions for the operating system.
+
+<Note>
+  **Status:** In development (scheduled for Phase 9)  
+  This document reflects the current security design. A formal threat model with STRIDE analysis will be published before v1.0 GA.
+</Note>
+
+---
+
+## Trust Boundaries
+
+### Trusted Components
+
+<AccordionGroup>
+  <Accordion title="Kernel">
+    **Trust Level:** Root of trust
+
+    - Runs in CPU ring 0 with full hardware access
+    - Enforces all security policies (MAC, capabilities, isolation)
+    - Single point of failure for system security
+
+    **Assumptions:**
+    - Kernel code is correct and free of exploitable bugs
+    - Boot process securely loads kernel without tampering
+    - KASLR provides sufficient entropy (RDRAND or RDTSC available)
+  </Accordion>
+
+  <Accordion title="Init System">
+    **Trust Level:** Highly trusted (PID 1)
+
+    - Bootstraps userspace and spawns critical services
+    - Has elevated capabilities for system initialization
+    - Must not be exploitable during boot sequence
+  </Accordion>
+
+  <Accordion title="Agent Runtime">
+    **Trust Level:** Trusted for enforcement, untrusted for content
+
+    - Enforces sandbox policies for agent processes
+    - Syscall filter and resource quotas prevent escape
+    - Does not trust agent code or data
+  </Accordion>
+</AccordionGroup>
+
+### Untrusted Components
+
+<AccordionGroup>
+  <Accordion title="Agent Processes">
+    **Trust Level:** Untrusted
+
+    - Execute arbitrary LLM-generated code
+    - Sandboxed with syscall filtering and resource limits
+    - Cannot directly access kernel memory or hardware
+    - Cannot communicate with other agents without explicit capabilities
+  </Accordion>
+
+  <Accordion title="User Applications">
+    **Trust Level:** Untrusted by default
+
+    - Subject to MAC policy enforcement
+    - Require capabilities for IPC, network, and filesystem access
+    - Cannot elevate privileges without kernel vulnerability
+  </Accordion>
+
+  <Accordion title="Kernel Modules (Unsigned)">
+    **Trust Level:** Rejected
+
+    - Unsigned modules are refused at load time
+    - Module signature verification is mandatory
+    - Compromised modules can fully control the kernel
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Attack Surfaces
+
+### 1. Kernel Syscall Interface
+
+**Exposure:** All userspace processes
+
+**Attack Vectors:**
+- Integer overflows in syscall parameter validation
+- Buffer overflows in kernel buffers (copy_from_user/copy_to_user)
+- Use-after-free in process/file descriptor management
+- Race conditions in concurrent syscall handling
+
+**Mitigations:**
+- Input validation on all syscall parameters
+- Stack canaries detect buffer overflows (`-fstack-protector-strong`)
+- NX bit prevents code execution on stack/heap
+- Per-process page tables isolate address spaces
+
+**Reference:** `kernel/src/proc/syscall.c`
+
+---
+
+### 2. Agent Runtime Sandbox
+
+**Exposure:** Agent processes (LLM-generated code)
+
+**Attack Vectors:**
+- Syscall filter bypass (bitmap manipulation)
+- Resource quota exhaustion (CPU, memory, disk)
+- IPC channel escape to communicate with unauthorized processes
+- Filesystem access via path traversal or symlink attacks
+
+**Mitigations:**
+- Bitmap-based syscall whitelist (`userland/agent-runtime/syscall_filter.c:26`)
+- Default-deny sandbox policy (`userland/agent-runtime/sandbox.c:26`)
+- Capability tokens required for IPC (`kernel/src/ipc/caps.c:28`)
+- Path canonicalization and chroot isolation (planned)
+
+<Warning>
+  Agent processes are assumed to be hostile. The sandbox must remain secure even if the agent code is malicious.
+</Warning>
+
+---
+
+### 3. WASM Runtime
+
+**Exposure:** Browser-based WASM applications
+
+**Attack Vectors:**
+- WASM sandbox escape to native code execution
+- Spectre-style side-channel attacks via shared memory
+- Malicious WASM modules exploiting JIT compiler bugs
+
+**Mitigations:**
+- WASM runtime isolated from kernel via kernel-wasm bridge
+- Memory isolation between WASM instances
+- No direct syscall access (must go through bridge API)
+
+**Reference:** `wasm-runtime/bridge/kernel-wasm.c`
+
+**Status:** WASM security model under active development
+
+---
+
+### 4. Network Stack
+
+**Exposure:** All processes with `CAP_NET` capability
+
+**Attack Vectors:**
+- TCP/IP stack buffer overflows (packet parsing)
+- SYN flood denial of service
+- ARP spoofing and man-in-the-middle attacks
+- UDP amplification attacks
+
+**Mitigations:**
+- Packet validation in `kernel/src/net/packet.c`
+- TCP SYN cookies (planned for v1.0)
+- ARP cache hardening (planned)
+- Rate limiting on network syscalls
+
+**Reference:** `kernel/src/net/tcp.c`, `kernel/src/net/udp.c`
+
+---
+
+### 5. Filesystem
+
+**Exposure:** Processes with `CAP_FS` capability
+
+**Attack Vectors:**
+- Path traversal attacks (../../../etc/passwd)
+- Symlink race conditions (TOCTOU)
+- Filesystem metadata corruption
+- Inode exhaustion denial of service
+
+**Mitigations:**
+- MAC policy restricts file access by label
+- Path canonicalization before permission checks
+- Filesystem quotas (planned)
+
+---
+
+### 6. Module Loading
+
+**Exposure:** Root processes with module signing key
+
+**Attack Vectors:**
+- Loading malicious kernel modules with forged signatures
+- Supply chain attacks on module build process
+- Key compromise allows arbitrary code execution in kernel
+
+**Mitigations:**
+- Mandatory signature verification (`kernel/src/security/modsign.c:44`)
+- Embedded public key at build time (cannot be modified at runtime)
+- Ed25519 signatures (planned for v1.0)
+
+<Warning>
+  **Critical Assumption:** The module signing private key must remain secure. Compromise of this key allows complete system takeover.
+</Warning>
+
+---
+
+## Threat Actors
+
+### Malicious Agent Code
+
+**Capability:** Low-privilege userspace execution
+
+**Goals:**
+- Escape sandbox to access filesystem or network
+- Steal sensitive data from other processes
+- Persist across reboots
+- Lateral movement to other agents
+
+**Defenses:**
+- Syscall filtering with default-deny
+- Capability-based IPC requires explicit tokens
+- Agent processes cannot write to persistent storage without `CAP_FS`
+
+---
+
+### Untrusted Kernel Modules
+
+**Capability:** Kernel-level code execution (if signature bypassed)
+
+**Goals:**
+- Install rootkit for persistent backdoor
+- Disable security features (MAC, KASLR, canaries)
+- Exfiltrate all system data
+
+**Defenses:**
+- Mandatory signature verification
+- No mechanism to disable signature checks at runtime
+- Ed25519 public key embedded in kernel binary
+
+---
+
+### Network Attackers
+
+**Capability:** Remote network access
+
+**Goals:**
+- Exploit network stack vulnerabilities
+- Denial of service via resource exhaustion
+- Man-in-the-middle attacks on unencrypted channels
+
+**Defenses:**
+- Packet validation and bounds checking
+- TCP connection limits (planned)
+- TLS support for encrypted communication (planned)
+
+---
+
+### Physical Attackers
+
+**Capability:** Physical hardware access
+
+**Goals:**
+- Boot from malicious media
+- DMA attacks via PCIe devices
+- Cold boot attacks to extract keys from RAM
+
+**Defenses:**
+- **Out of scope** for current threat model
+- Secure boot planned for future releases
+- IOMMU support for DMA protection (planned)
+
+---
+
+## Security Assumptions
+
+<AccordionGroup>
+  <Accordion title="Hardware Trust">
+    - CPU correctly implements x86-64 ISA and privilege levels
+    - RDRAND instruction provides cryptographically secure entropy (when available)
+    - NX bit enforcement works correctly
+    - No hardware backdoors or undocumented instructions
+  </Accordion>
+
+  <Accordion title="Boot Process">
+    - Bootloader (Limine) is trusted and unmodified
+    - Kernel binary is loaded without tampering
+    - Initial ramdisk contains legitimate init system
+    - BIOS/UEFI firmware is trusted (no malicious modifications)
+  </Accordion>
+
+  <Accordion title="Cryptographic Primitives">
+    - FNV-1a hash collisions are computationally infeasible for module signing (temporary)
+    - Ed25519 signatures cannot be forged without private key (when implemented)
+    - RDRAND bias (if any) does not weaken KASLR below acceptable threshold
+  </Accordion>
+
+  <Accordion title="Compiler and Toolchain">
+    - GCC/Clang correctly implements `-fstack-protector-strong`
+    - Linker does not introduce exploitable bugs
+    - No malicious code injected during build process
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Known Limitations
+
+<Warning>
+  The following security features are **not yet implemented** and represent current limitations:
+</Warning>
+
+| Limitation | Impact | Mitigation Status |
+|------------|--------|-------------------|
+| FNV-1a hash instead of SHA-256 | Weaker module signature verification | Planned for v1.0 |
+| No Ed25519 signature verification | Module integrity relies on hash alone | Planned for v1.0 |
+| No secure boot | Malicious bootloader can compromise system | Planned for future release |
+| No IOMMU support | DMA attacks possible via PCIe devices | Planned for future release |
+| No filesystem encryption | Data readable if disk is stolen | Not planned |
+| No TLS in network stack | Network traffic sent in cleartext | Planned for v1.0 |
+| No audit logging | Cannot detect or investigate attacks | Planned (audit daemon exists) |
+
+---
+
+## STRIDE Analysis
+
+<Note>
+  Full STRIDE threat modeling scheduled for Phase 9. Preliminary analysis below:
+</Note>
+
+### Spoofing
+
+- **Risk:** Agent process impersonates another agent via forged capability token
+- **Mitigation:** 64-bit unforgeable tokens with cryptographic entropy
+
+### Tampering
+
+- **Risk:** Attacker modifies kernel module before loading
+- **Mitigation:** Cryptographic signature verification (FNV-1a → Ed25519)
+
+### Repudiation
+
+- **Risk:** No audit trail for security-sensitive operations
+- **Mitigation:** Audit daemon planned (`userland/agent-runtime/audit.c`)
+
+### Information Disclosure
+
+- **Risk:** Memory leaks via syscall bugs expose kernel data
+- **Mitigation:** KASLR, per-process page tables, zero-on-free (planned)
+
+### Denial of Service
+
+- **Risk:** Agent exhausts kernel resources (memory, CPU, file descriptors)
+- **Mitigation:** Resource quotas (`userland/agent-runtime/quota.c`)
+
+### Elevation of Privilege
+
+- **Risk:** Sandbox escape allows agent to execute arbitrary syscalls
+- **Mitigation:** Syscall filter bitmap, capability token verification
+
+---
+
+## Reporting Security Issues
+
+See [Vulnerability Reporting](/security/vulnerability-reporting) for responsible disclosure policy.
+
+**Contact:** security@aurora-os.dev  
+**PGP Key:** To be published before v1.0 GA
+
+---
+
+## References
+
+- [Microsoft STRIDE Threat Modeling](https://learn.microsoft.com/en-us/azure/security/develop/threat-modeling-tool-threats)
+- [OWASP Threat Modeling](https://owasp.org/www-community/Threat_Modeling)
+- [seL4 Security Whitepaper](https://sel4.systems/About/seL4-whitepaper.pdf)
+- [Linux Kernel Self Protection Project](https://www.kernel.org/doc/html/latest/security/self-protection.html)

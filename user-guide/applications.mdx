@@ -1,0 +1,536 @@
+---
+title: 'Applications'
+description: 'Explore the built-in applications and App Store in Aurora OS'
+icon: 'grid'
+---
+
+## Overview
+
+Aurora OS comes with 12 built-in applications and an App Store for installing additional software. All apps feature the signature glass morphism design and smooth animations.
+
+<Note>
+  All applications are fully functional with persistent data storage using localStorage and IndexedDB
+</Note>
+
+## Built-in Applications
+
+### Terminal
+
+**Launch**: `Super + T` or click Terminal icon
+
+A full-featured terminal emulator with command history and 50+ Linux commands.
+
+<CardGroup cols={2}>
+  <Card title="Shell: ash 1.0" icon="terminal">
+    Lightweight shell with pipe and redirect support
+  </Card>
+  <Card title="Command History" icon="clock-rotate-left">
+    Arrow up/down to navigate history, stored across sessions
+  </Card>
+  <Card title="Tab Completion" icon="keyboard">
+    Press Tab to autocomplete file and directory names
+  </Card>
+  <Card title="Pipes & Redirects" icon="arrow-right-arrow-left">
+    Full support for `|`, `>`, and `>>` operators
+  </Card>
+</CardGroup>
+
+#### Available Commands
+
+<Accordion title="File Operations">
+  ```bash
+  ls          # List directory contents (-l for long, -a for all)
+  cat         # Display file contents
+  head        # Show first N lines (-n 10)
+  tail        # Show last N lines (-n 10)
+  wc          # Word count (lines, words, chars)
+  cp          # Copy files
+  mv          # Move/rename files
+  rm          # Remove files
+  mkdir       # Create directory
+  touch       # Create empty file
+  chmod       # Change permissions
+  chown       # Change owner
+  ln          # Create links
+  find        # Search files (-name pattern)
+  grep        # Search patterns (-i -n -c)
+  sort        # Sort lines
+  uniq        # Remove duplicates
+  diff        # Compare files
+  sed         # Stream editor
+  awk         # Pattern processing
+  stat        # File statistics
+  file        # Determine file type
+  du          # Disk usage
+  df          # Filesystem info
+  write       # Write content to file
+  ```
+</Accordion>
+
+<Accordion title="System Commands">
+  ```bash
+  ps          # Process status
+  top         # System monitor (similar to ps)
+  kill        # Kill process by ID
+  free        # Memory info
+  uname       # System info (-a for all)
+  hostname    # Show hostname
+  id          # User ID
+  groups      # User groups
+  whoami      # Current user
+  uptime      # System uptime
+  env         # Environment variables
+  history     # Command history
+  cal         # Calendar
+  date        # Current date/time
+  ```
+</Accordion>
+
+<Accordion title="Network Commands">
+  ```bash
+  ping        # Send ICMP echo
+  ifconfig    # Network configuration
+  ip          # Network config (addr|route|link)
+  ss          # Socket statistics
+  nslookup    # DNS lookup
+  dig         # DNS query
+  curl        # Transfer URL (sandboxed)
+  wget        # Download file (sandboxed)
+  ```
+</Accordion>
+
+<Accordion title="Aurora-Specific Commands">
+  ```bash
+  neofetch    # System info with ASCII art
+  sysinfo     # Detailed system information
+  store       # App store CLI (list|install|remove|run)
+  screenshot  # Capture screenshot
+  tile        # Tile all windows
+  cascade     # Cascade windows
+  desktop     # Toggle show desktop
+  shortcuts   # Show keyboard shortcuts overlay
+  search      # Search persistent filesystem
+  export      # Export filesystem
+  gpu         # GPU compositor controls (on|off|status|rain|snow|crt)
+  expo        # Toggle Exposé view
+  open        # Open app or file
+  ```
+</Accordion>
+
+<Tip>
+  Type `help` in the terminal to see all available commands
+</Tip>
+
+### Files
+
+**Launch**: `Super + F` or click Files icon
+
+Modern file manager with grid and list views, supporting Aurora's virtual filesystem.
+
+**Features**:
+- Grid and list view modes
+- Breadcrumb navigation
+- File operations (copy, move, delete, rename)
+- Directory tree navigation
+- Quick access to home, documents, downloads
+- File preview for text files
+- Search within current directory
+
+**Keyboard Shortcuts**:
+- `Cmd/Ctrl + N`: New folder
+- `Cmd/Ctrl + R`: Rename selected
+- `Delete`: Remove selected
+- `Cmd/Ctrl + C`: Copy
+- `Cmd/Ctrl + V`: Paste
+
+### Browser
+
+**Launch**: `Super + B` or click Browser icon
+
+Web browser with tab support and bookmark management.
+
+**Features**:
+- Multiple tabs with tab switching
+- Address bar with URL validation
+- Bookmarks bar
+- Back/forward navigation
+- Refresh button
+- Home button
+- Sandboxed iframe for page rendering
+
+<Note>
+  The browser is sandboxed and operates within Aurora OS's security model
+</Note>
+
+### Text Editor
+
+**Launch**: Click Text Editor icon or `open filename.txt` in Terminal
+
+Code editor with syntax highlighting for popular languages.
+
+**Features**:
+- Syntax highlighting (JavaScript, Python, HTML, CSS, JSON, Markdown)
+- Line numbers
+- Auto-save (saves to virtual filesystem)
+- Find and replace
+- Multiple file support
+- Monospace font with configurable size
+- Bracket matching
+
+**Supported File Types**:
+- `.js`, `.mjs` - JavaScript
+- `.py` - Python
+- `.html`, `.htm` - HTML
+- `.css` - CSS
+- `.json` - JSON
+- `.md`, `.markdown` - Markdown
+- `.txt` - Plain text
+
+### System Monitor
+
+**Launch**: Click System Monitor icon
+
+Real-time system metrics with live graphs and process management.
+
+**Metrics Displayed**:
+- CPU usage per core
+- Memory usage (total, used, free)
+- Disk I/O statistics
+- Network traffic (up/down)
+- Process list with PID, name, CPU%, memory
+- System uptime
+- Battery status (if available)
+
+**Features**:
+- Real-time graphs with 60-second history
+- Process filtering and search
+- Kill process capability
+- Sort by CPU or memory usage
+- Auto-refresh every 2 seconds
+
+### Settings
+
+**Launch**: Click Settings icon or `Super + ,`
+
+System configuration and preferences.
+
+<Tabs>
+  <Tab title="Appearance">
+    - Theme selection (Light/Dark/System)
+    - Wallpaper picker with 11 options
+    - Accent color customization
+    - Font size adjustment
+    - Parallax wallpaper toggle
+    - Animation speed (Fast/Normal/Slow)
+    - Reduced motion toggle
+  </Tab>
+  <Tab title="System">
+    - Language and region settings
+    - Timezone selection (auto-detected via `Intl.DateTimeFormat`)
+    - Date and time format
+    - Battery settings
+    - Storage management
+    - About this Mac/PC
+  </Tab>
+  <Tab title="Network">
+    - WiFi on/off toggle
+    - Network name display
+    - Connection status
+    - Bluetooth controls
+  </Tab>
+  <Tab title="Privacy & Security">
+    - User account management
+    - Password change
+    - Session timeout settings
+    - Factory reset option
+  </Tab>
+</Tabs>
+
+### Calculator
+
+**Launch**: Click Calculator icon
+
+Scientific calculator with standard and advanced operations.
+
+**Operations**:
+- Basic: `+`, `-`, `×`, `÷`
+- Scientific: `sin`, `cos`, `tan`, `log`, `ln`, `√`, `x²`, `xʸ`
+- Constants: `π`, `e`
+- Memory: M+, M-, MR, MC
+- History of calculations
+
+### App Store
+
+**Launch**: Click App Store icon or run `store list` in Terminal
+
+Install and manage additional applications.
+
+**Features**:
+- Browse app catalog by category (Productivity, Utilities, Entertainment, Social)
+- Search apps by name or description
+- Install/uninstall with one click
+- App details with screenshots and descriptions
+- Installed app management
+- CLI access via `store` command
+
+**CLI Usage**:
+```bash
+# List all available apps
+store list
+
+# Search for apps
+store search weather
+
+# Install an app
+store install weather-app
+
+# Remove an app
+store remove weather-app
+
+# Launch an installed app
+store run weather-app
+```
+
+## Enhanced Applications (New in v0.1.0)
+
+Four new applications with beautiful UI and persistent data storage.
+
+### Weather
+
+**Launch**: Click Weather icon
+
+Beautiful weather display with 5-day forecast.
+
+<CardGroup cols={2}>
+  <Card title="Current Conditions" icon="cloud-sun">
+    Temperature, weather condition, and location display with emoji icons
+  </Card>
+  <Card title="Detailed Stats" icon="chart-line">
+    Humidity, wind speed, and atmospheric pressure
+  </Card>
+  <Card title="5-Day Forecast" icon="calendar-days">
+    Daily high/low temperatures with weather icons
+  </Card>
+  <Card title="Beautiful Design" icon="sparkles">
+    Large temperature display with gradient backgrounds
+  </Card>
+</CardGroup>
+
+**UI Elements**:
+- Large weather icon (☀️ ☁️ ⛅ 🌧️)
+- Temperature in Celsius with large display
+- Current condition text
+- Location (San Francisco, CA by default)
+- Three-column stats (Humidity, Wind, Pressure)
+- 5-day forecast cards with day name, icon, high/low
+
+### Notes
+
+**Launch**: Click Notes icon
+
+Rich note-taking application with auto-save and organization.
+
+**Features**:
+- Create unlimited notes
+- Two-pane interface (list + editor)
+- Auto-save as you type
+- Note titles and content
+- Timestamp tracking (created and last modified)
+- Character count
+- Delete notes with confirmation
+- Persistent storage (localStorage)
+- Search and filter (coming soon)
+
+**Workflow**:
+1. Click "+ New Note" button
+2. Enter note title
+3. Type content in textarea
+4. Auto-saves on every keystroke
+5. Switch between notes in left sidebar
+6. Delete with confirmation prompt
+
+<Tip>
+  Notes are stored in localStorage and survive browser restarts and cache clears
+</Tip>
+
+### Tasks
+
+**Launch**: Click Tasks icon
+
+To-do list with completion tracking and persistent storage.
+
+**Features**:
+- Add tasks with Enter key or Add button
+- Mark tasks as complete with checkbox
+- Separate sections for Pending and Completed
+- Delete individual tasks
+- Task counters (Pending: X, Completed: Y)
+- Persistent storage (localStorage)
+- Clean, minimal interface
+
+**UI Elements**:
+- Input field for new tasks
+- Pending section with unchecked items
+- Completed section with checked items (strikethrough)
+- Delete button per task
+- Section headers with counts
+- Empty state messages
+
+**Keyboard Shortcuts**:
+- `Enter` in input field: Add task
+- Click checkbox: Toggle completion
+- Click Delete: Remove task
+
+### Music Player
+
+**Launch**: Click Music icon
+
+Music player with playlist support and playback controls.
+
+**Features**:
+- Album artwork display (emoji-based)
+- Play/pause controls
+- Previous/next track buttons
+- Progress bar with seek capability
+- Track information (title, artist, duration)
+- Playlist view with 5 demo tracks
+- Active track highlighting
+- Click track to play
+
+**Playlist**:
+1. Neon Dreams - Synthwave Collective (3:45)
+2. Digital Horizon - Cyber Pulse (4:12)
+3. Aurora Lights - Northern Beats (3:58)
+4. Midnight Drive - Retro Wave (4:30)
+5. Electric Sky - Neon Knights (3:22)
+
+**Controls**:
+- ⏮ Previous track
+- ▶ Play / ⏸ Pause
+- ⏭ Next track
+- Progress bar: Click to seek
+
+<Note>
+  Audio playback is simulated with visual progress. Integration with Web Audio API is planned for future releases.
+</Note>
+
+## App Store Catalog
+
+Additional apps available for installation:
+
+<Accordion title="Productivity Apps">
+  - **Notes** - Enhanced note-taking (pre-installed)
+  - **Tasks** - To-do list manager (pre-installed)
+  - **Calendar** - Event scheduling
+  - **Email** - Email client
+  - **Spreadsheet** - Tabular data editor
+</Accordion>
+
+<Accordion title="Utilities">
+  - **Weather** - Weather forecast (pre-installed)
+  - **Clock** - World clock and timer
+  - **Unit Converter** - Unit conversions
+  - **Archive** - Zip/unzip files
+</Accordion>
+
+<Accordion title="Entertainment">
+  - **Music** - Music player (pre-installed)
+  - **Photos** - Image viewer and organizer
+  - **Video Player** - Video playback
+  - **Games** - Simple games collection
+</Accordion>
+
+## Application Management
+
+### Opening Apps
+
+<CodeGroup>
+```bash Keyboard Shortcuts
+Super + T    # Terminal
+Super + F    # Files
+Super + B    # Browser
+Super + ,    # Settings
+```
+
+```bash Terminal Command
+open terminal
+open files
+open weather
+open notes
+```
+
+```bash Spotlight Search
+Cmd/Super + Space
+# Type app name
+# Press Enter
+```
+</CodeGroup>
+
+### Closing Apps
+
+- Click red close button (traffic light)
+- Press `Ctrl + Q` (closes active window)
+- Right-click dock icon → Quit
+- Run `kill <window-id>` in Terminal
+
+### Window Operations
+
+<CardGroup cols={2}>
+  <Card title="Minimize" icon="window-minimize">
+    Click yellow button or `Cmd + M`
+  </Card>
+  <Card title="Maximize" icon="window-maximize">
+    Click green button or double-click titlebar
+  </Card>
+  <Card title="Pin" icon="thumbtack">
+    Right-click titlebar → Pin (keeps window on top)
+  </Card>
+  <Card title="Move" icon="arrows-up-down-left-right">
+    Drag titlebar to reposition window
+  </Card>
+</CardGroup>
+
+## Data Persistence
+
+All application data is persisted using modern browser storage APIs:
+
+### Storage Hierarchy
+
+1. **OPFS (Origin Private File System)** - Tier 1, survives cache clear
+2. **IndexedDB** - Tier 2, large data storage
+3. **localStorage** - Tier 3, simple key-value pairs
+4. **Service Worker Cache** - Tier 4, fallback
+
+<Tip>
+  Aurora OS uses a multi-tier storage strategy to ensure your data survives even aggressive browser cache clearing
+</Tip>
+
+## Performance Optimization
+
+Applications are optimized for smooth performance:
+
+- **GPU Acceleration**: All animations use CSS transforms
+- **Virtual Scrolling**: Large lists render only visible items
+- **Lazy Loading**: Apps load content on demand
+- **Debounced Input**: Text input is debounced to reduce overhead
+- **Efficient Rendering**: React-like diffing for DOM updates
+
+## Developing Custom Apps
+
+Developers can create custom applications for Aurora OS:
+
+```javascript
+// Register a new app
+APPS.push({
+  id: 'my-app',
+  name: 'My Application',
+  icon: 'star',
+  color: 'linear-gradient(135deg,#667eea,#764ba2)',
+  action: () => {
+    const el = createWindow('my-app', 'My Application', 600, 400, 100, 100, '', 'star');
+    // Build your app UI
+  }
+});
+```
+
+See the Developer Guide for detailed instructions on building custom applications.

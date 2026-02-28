@@ -1,0 +1,324 @@
+---
+title: Security Overview
+description: Aurora OS security architecture, hardening features, and defense mechanisms
+---
+
+Aurora OS implements a defense-in-depth security model combining hardware-backed protections, kernel hardening, mandatory access control, and application sandboxing.
+
+## Security Architecture
+
+The security model is built on multiple layers:
+
+<Steps>
+  <Step title="Hardware Security Foundation">
+    KASLR and ASLR using RDRAND (hardware RNG) with RDTSC fallback for entropy
+  </Step>
+  <Step title="Kernel Hardening">
+    Stack canaries, NX bit enforcement, and per-process page table isolation
+  </Step>
+  <Step title="Access Control">
+    Capability-based IPC tokens and label-based mandatory access control (MAC)
+  </Step>
+  <Step title="Application Isolation">
+    Agent runtime sandboxing with syscall filtering and resource quotas
+  </Step>
+</Steps>
+
+---
+
+## Kernel Security Features
+
+### Address Space Layout Randomization
+
+<AccordionGroup>
+  <Accordion title="KASLR (Kernel ASLR)">
+    Randomizes kernel base address at boot time within a 1GB range.
+
+    **Implementation:** `kernel/src/security/kaslr.c:22`
+
+    ```c
+    void kaslr_init(void) {
+        uint64_t raw = aslr_randomize(0, 0x40000000ULL); /* 0 to 1GB */
+        kaslr_offset_val = raw & ~((uint64_t)0x1FFFFF);  /* 2MB align */
+        kaslr_initialized = 1;
+    }
+    ```
+
+    - **Offset Range:** 0 to 1GB from kernel base (0xFFFFFFFF80000000)
+    - **Alignment:** 2MB boundaries for huge page compatibility
+    - **Entropy Source:** RDRAND instruction with RDTSC fallback
+  </Accordion>
+
+  <Accordion title="Userspace ASLR">
+    Randomizes process heap, stack, and shared library addresses.
+
+    **Entropy Source:** `kernel/src/security/aslr.c:58`
+
+    ```c
+    uint64_t aslr_randomize(uint64_t base, uint64_t range) {
+        uint64_t r;
+        if (!rdrand64(&r)) {
+            /* RDRAND unavailable — fall back to RDTSC-seeded Xorshift */
+            if (xorshift64_state == 0) xorshift_seed_from_tsc();
+            r = xorshift64_next();
+        }
+        return base + ((r % range) & ~0xFFFULL);
+    }
+    ```
+
+    **Primary:** RDRAND (Intel IvyBridge+, AMD Zen+)  
+    **Fallback:** RDTSC-seeded Xorshift64 (non-cryptographic but boot-unique)
+  </Accordion>
+</AccordionGroup>
+
+### Stack Protection
+
+Compiled with `-fstack-protector-strong` and runtime canary verification.
+
+**Canary Initialization:** `kernel/src/security/canary.c:15`
+
+```c
+void canary_init(void) {
+    __stack_chk_guard = aslr_randomize(0, 0xFFFFFFFFFFFFFFFFULL);
+    /* Ensure low byte is zero (catches string overflows) */
+    __stack_chk_guard &= ~0xFFULL;
+}
+```
+
+<Note>
+  The canary's low byte is zeroed to detect string-based buffer overflows that use null terminators.
+</Note>
+
+**Stack Smashing Detection:** `kernel/src/security/canary.c:22`
+
+When corruption is detected, `__stack_chk_fail()` triggers an immediate kernel panic:
+
+```c
+void __stack_chk_fail(void) {
+    vga_puts("KERNEL PANIC: stack smashing detected!\n");
+    for (;;) __asm__ volatile("cli; hlt");
+}
+```
+
+### Memory Protection
+
+- **NX Bit Enforcement:** Non-executable stack and data pages via page table NX flag
+- **Per-Process Page Tables:** Complete address space isolation with CR3 register switching on context switch
+- **Write XOR Execute:** Code pages are executable but not writable; data pages are writable but not executable
+
+---
+
+## Access Control
+
+### Capability Tokens
+
+seL4-inspired unforgeable 64-bit tokens for IPC access control.
+
+**Token Structure:** `kernel/src/ipc/caps.h:26`
+
+```c
+struct capability {
+    uint64_t token;        // Unforgeable identifier
+    int owner_pid;         // Owning process
+    uint32_t permissions;  // Bitfield of CAP_READ, CAP_WRITE, etc.
+    int valid;             // Revocation flag
+};
+```
+
+**Permission Types:**
+
+| Permission | Value | Description |
+|------------|-------|-------------|
+| `CAP_READ` | 1 | Read access |
+| `CAP_WRITE` | 2 | Write access |
+| `CAP_EXEC` | 4 | Execute permission |
+| `CAP_IPC` | 8 | IPC endpoint access |
+| `CAP_NET` | 16 | Network socket access |
+| `CAP_FS` | 32 | Filesystem access |
+
+**API:** `kernel/src/ipc/caps.c`
+
+```c
+uint64_t cap_create(int owner_pid, uint32_t permissions);
+int cap_verify(uint64_t token, uint32_t required_perms);
+void cap_revoke(uint64_t token);
+```
+
+<Warning>
+  Capability tokens are monotonically increasing and cannot be guessed. Loss of a token means permanent loss of access until a new token is issued.
+</Warning>
+
+### Mandatory Access Control (MAC)
+
+Hybrid label-based policy with Bell-LaPadula fallback rules.
+
+**Policy Matrix:** `kernel/src/security/mac.c:36`
+
+```c
+static uint8_t policy[MAC_MAX_LABELS][MAC_MAX_LABELS][MAC_OP_MAX];
+```
+
+- **Labels:** Each process and object has a security label with a trust level (0 = untrusted, higher = more trusted)
+- **Operations:** `MAC_OP_READ`, `MAC_OP_WRITE`, `MAC_OP_EXEC`
+- **Policy:** Explicit allow/deny rules override default Bell-LaPadula rules
+
+**Fallback Rules:** `kernel/src/security/mac.c:128`
+
+```c
+switch (operation) {
+case MAC_OP_READ:
+case MAC_OP_EXEC:
+    return subject_level >= target_level ? MAC_ALLOW : MAC_DENY;
+case MAC_OP_WRITE:
+    return subject_level <= target_level ? MAC_ALLOW : MAC_DENY;
+}
+```
+
+- **No Read Up:** Processes cannot read objects at higher trust levels
+- **No Write Down:** Processes cannot write to objects at lower trust levels (prevents information leakage)
+
+---
+
+## Module Signing
+
+All kernel modules must be cryptographically signed before loading.
+
+**Signature Format:** `kernel/src/security/modsign.c:16`
+
+```c
+struct module_signature {
+    uint32_t magic;      // 0xA0A0DEAD
+    uint32_t version;    // Signature format version
+    uint32_t hash;       // FNV-1a hash (placeholder for SHA-256)
+    uint32_t key_id;     // Trusted key identifier
+    uint8_t  sig[64];    // Ed25519 signature (planned)
+};
+```
+
+**Verification Process:** `kernel/src/security/modsign.c:44`
+
+<Steps>
+  <Step title="Magic Validation">
+    Verify signature magic is `0xA0A0DEAD`
+  </Step>
+  <Step title="Hash Verification">
+    Compute FNV-1a hash of module data and compare to embedded hash
+  </Step>
+  <Step title="Key ID Check">
+    Ensure `key_id` matches the hash of the embedded trusted public key
+  </Step>
+  <Step title="Signature Validation (Planned)">
+    Verify Ed25519 signature using embedded public key
+  </Step>
+</Steps>
+
+<Note>
+  Current implementation uses FNV-1a hashing. Production will use SHA-256 with Ed25519 signatures.
+</Note>
+
+**Embedded Public Key:** Baked into the kernel at build time (`kernel/src/security/modsign.c:25`)
+
+---
+
+## Agent Runtime Sandbox
+
+Strongly isolated execution environment for agent processes.
+
+### Syscall Filtering
+
+Bitmap-based whitelist similar to Linux seccomp.
+
+**Filter Map:** `userland/agent-runtime/syscall_filter.c:13`
+
+```c
+/* 256 bits = 32 bytes per agent */
+static uint8_t filter_map[MAX_AGENTS][MAX_SYSCALLS / 8];
+```
+
+**API:**
+
+```c
+void filter_allow(int agent_id, int syscall_nr);
+int filter_check(int agent_id, int syscall_nr);
+```
+
+- **Default:** All syscalls denied
+- **Granularity:** Per-agent, per-syscall
+- **Performance:** O(1) lookup via bitmap indexing
+
+### Resource Isolation
+
+**Sandbox Structure:** `userland/agent-runtime/sandbox.c:10`
+
+```c
+struct sandbox {
+    int id;
+    int agent_id;
+    int active;
+    int fs_denied;  // 1 = no filesystem access
+    int net_denied; // 1 = no network access
+};
+```
+
+**Default Policy:** Deny all (filesystem and network access disabled by default)
+
+**Access Check:** `userland/agent-runtime/sandbox.c:40`
+
+```c
+int sandbox_check_access(int id, int resource) {
+    if (id < 0 || id >= MAX_SANDBOXES || !sandboxes[id].active) return -1;
+    if (resource == 0 && sandboxes[id].fs_denied) return -1;
+    if (resource == 1 && sandboxes[id].net_denied) return -1;
+    return 0;
+}
+```
+
+---
+
+## Security Scope
+
+### In Scope for Vulnerability Reports
+
+- Kernel vulnerabilities (memory corruption, privilege escalation, information disclosure)
+- Agent runtime sandbox escapes
+- WASM runtime security issues (browser sandbox bypass)
+- Authentication/authorization bypasses
+- Cryptographic weaknesses in module signing or update verification
+- Supply chain attacks on build/release pipeline
+
+### Out of Scope
+
+- Denial of service via resource exhaustion (unless trivially exploitable)
+- Issues requiring physical access to hardware
+- Social engineering attacks
+- Vulnerabilities in third-party dependencies (report upstream; notify us for tracking)
+
+<Warning>
+  See [Vulnerability Reporting](/security/vulnerability-reporting) for disclosure policy and contact information.
+</Warning>
+
+---
+
+## Security Roadmap
+
+| Feature | Status | Target |
+|---------|--------|--------|
+| KASLR with RDRAND | ✅ Implemented | v0.1 |
+| Stack canaries | ✅ Implemented | v0.1 |
+| Capability tokens | ✅ Implemented | v0.1 |
+| Module signing (FNV-1a) | ✅ Implemented | v0.1 |
+| Ed25519 signature verification | 🔄 Planned | v1.0 |
+| SHA-256 module hashing | 🔄 Planned | v1.0 |
+| Formal threat model | 🔄 Planned | Phase 9 |
+| Security audit | 🔄 Planned | Pre-GA |
+| PGP key publication | 🔄 Planned | Pre-GA |
+
+---
+
+## References
+
+- [KASLR Implementation](https://wiki.osdev.org/ASLR)
+- [seL4 Capability Model](https://sel4.systems/Info/Docs/seL4-manual-latest.pdf)
+- [Linux seccomp](https://man7.org/linux/man-pages/man2/seccomp.2.html)
+- [Intel RDRAND Instruction](https://www.intel.com/content/www/us/en/developer/articles/guide/intel-digital-random-number-generator-drng-software-implementation-guide.html)
+- [Monocypher](https://monocypher.org) (Ed25519 reference)

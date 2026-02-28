@@ -1,0 +1,171 @@
+---
+title: System Calls Overview
+description: Aurora OS syscall interface using SYSCALL instruction with x86_64 ABI
+---
+
+## Introduction
+
+Aurora OS implements system calls using the x86_64 `SYSCALL` instruction (with `int $0x80` as a fallback). All syscalls follow a consistent calling convention and return negative values to indicate errors.
+
+## Calling Convention
+
+Syscalls use the following register layout:
+
+<ParamField path="RAX" type="uint64_t" required>
+  Syscall number (0-39)
+</ParamField>
+
+<ParamField path="RDI" type="uint64_t">
+  First argument (arg1)
+</ParamField>
+
+<ParamField path="RSI" type="uint64_t">
+  Second argument (arg2)
+</ParamField>
+
+<ParamField path="RDX" type="uint64_t">
+  Third argument (arg3)
+</ParamField>
+
+<ParamField path="R10" type="uint64_t">
+  Fourth argument (use R10 instead of RCX, which is clobbered by SYSCALL)
+</ParamField>
+
+### Return Value
+
+<ResponseField name="RAX" type="int64_t">
+  Return value. Negative values indicate errors:
+  - `-1`: Generic error (EINVAL, ENOENT, ENOMEM)
+  - `-2`: Permission denied (EPERM) — syscall filter blocked the call
+</ResponseField>
+
+## ABI Notes
+
+<Note>
+  The `SYSCALL` instruction clobbers `RCX` (saved RIP) and `R11` (saved RFLAGS). Use `R10` for the 4th argument instead of `RCX`.
+</Note>
+
+<Info>
+  The kernel stack is loaded from TSS `rsp0` on ring transition (privilege level change from user to kernel mode).
+</Info>
+
+## Syscall Categories
+
+Aurora OS provides 40 system calls organized into the following categories:
+
+### Process Management
+- [SYS_EXIT](/api/syscalls/process#sys_exit) — Terminate current process
+- [SYS_FORK](/api/syscalls/process#sys_fork) — Create child process
+- [SYS_EXECVE](/api/syscalls/process#sys_execve) — Execute new program
+- [SYS_WAITPID](/api/syscalls/process#sys_waitpid) — Wait for child process
+- [SYS_YIELD](/api/syscalls/process#sys_yield) — Yield CPU to scheduler
+- [SYS_GETPID](/api/syscalls/process#sys_getpid) — Get process ID
+- [SYS_KILL](/api/syscalls/process#sys_kill) — Send signal to process
+
+### File System
+- [SYS_OPEN](/api/syscalls/filesystem#sys_open) — Open file or device
+- [SYS_CLOSE](/api/syscalls/filesystem#sys_close) — Close file descriptor
+- [SYS_READ](/api/syscalls/filesystem#sys_read) — Read from file
+- [SYS_WRITE](/api/syscalls/filesystem#sys_write) — Write to file
+- [SYS_STAT](/api/syscalls/filesystem#sys_stat) — Get file status
+- [SYS_FSTAT](/api/syscalls/filesystem#sys_fstat) — Get file status by fd
+- [SYS_LSEEK](/api/syscalls/filesystem#sys_lseek) — Reposition file offset
+- [SYS_GETDENTS](/api/syscalls/filesystem#sys_getdents) — Read directory entries
+- [SYS_MKDIR](/api/syscalls/filesystem#sys_mkdir) — Create directory
+- [SYS_UNLINK](/api/syscalls/filesystem#sys_unlink) — Remove file
+
+### Memory Management
+- [SYS_MMAP](/api/syscalls/memory#sys_mmap) — Map memory region
+- [SYS_MUNMAP](/api/syscalls/memory#sys_munmap) — Unmap memory region
+- [SYS_BRK](/api/syscalls/memory#sys_brk) — Change data segment size
+
+### Inter-Process Communication
+- [SYS_PIPE](/api/syscalls/ipc#sys_pipe) — Create pipe
+- [SYS_DUP2](/api/syscalls/ipc#sys_dup2) — Duplicate file descriptor
+- [SYS_MSGSND](/api/syscalls/ipc#sys_msgsnd) — Send message
+- [SYS_MSGRCV](/api/syscalls/ipc#sys_msgrcv) — Receive message
+- [SYS_SHMGET](/api/syscalls/ipc#sys_shmget) — Create shared memory segment
+- [SYS_SHMAT](/api/syscalls/ipc#sys_shmat) — Attach shared memory
+- [SYS_SHMDT](/api/syscalls/ipc#sys_shmdt) — Detach shared memory
+
+### Network
+- [SYS_SOCKET](/api/syscalls/network#sys_socket) — Create socket
+- [SYS_BIND](/api/syscalls/network#sys_bind) — Bind socket to address
+- [SYS_CONNECT](/api/syscalls/network#sys_connect) — Connect to remote address
+- [SYS_LISTEN](/api/syscalls/network#sys_listen) — Listen for connections
+- [SYS_ACCEPT](/api/syscalls/network#sys_accept) — Accept incoming connection
+- [SYS_SEND](/api/syscalls/network#sys_send) — Send data on socket
+- [SYS_RECV](/api/syscalls/network#sys_recv) — Receive data from socket
+
+### Miscellaneous
+- [SYS_GETCWD](/api/syscalls/filesystem#sys_getcwd) — Get current working directory
+- [SYS_CLOCK](/api/syscalls/process#sys_clock) — Get timestamp (TSC ticks)
+- [SYS_NANOSLEEP](/api/syscalls/process#sys_nanosleep) — Sleep for specified duration
+- [SYS_IOCTL](/api/syscalls/filesystem#sys_ioctl) — Device control operations
+- [SYS_SIGACTION](/api/syscalls/process#sys_sigaction) — Set signal handler
+- [SYS_SIGRETURN](/api/syscalls/process#sys_sigreturn) — Return from signal handler
+
+## Syscall Filtering
+
+<Warning>
+  Per-process syscall filter bitmaps can block specific syscalls for sandboxed agents. When a syscall is blocked, it returns `-2` (EPERM).
+</Warning>
+
+The kernel maintains a 256-bit filter bitmap (32 bytes) per process. When `filter_enabled` is set, each syscall number is checked against the bitmap before execution.
+
+```c
+struct process {
+    uint8_t syscall_filter[32];  // 256 bits (one per syscall)
+    int filter_enabled;
+};
+```
+
+## Signals
+
+Aurora OS supports the following signals:
+
+| Signal | Number | Default Action | Catchable |
+|--------|--------|----------------|----------|
+| SIGKILL | 9 | Terminate | No |
+| SIGSEGV | 11 | Terminate | Yes |
+| SIGPIPE | 13 | Terminate | Yes |
+| SIGCHLD | 17 | Ignore | Yes |
+
+<Note>
+  SIGKILL cannot be caught or ignored. It always terminates the target process immediately.
+</Note>
+
+## Implementation Details
+
+The syscall interface is implemented in `/kernel/src/proc/syscall.c` with the following components:
+
+### MSR Configuration
+
+```c
+void syscall_init(void) {
+    // Enable SYSCALL/SYSRET (SCE bit in EFER)
+    wrmsr(IA32_EFER, rdmsr(IA32_EFER) | 1);
+    
+    // Set up segment selectors
+    wrmsr(IA32_STAR, ((uint64_t)0x0008 << 32) | ((uint64_t)0x0018 << 48));
+    
+    // Set syscall entry point
+    wrmsr(IA32_LSTAR, (uint64_t)syscall_entry);
+    
+    // Mask interrupts on syscall entry
+    wrmsr(IA32_FMASK, (1 << 9));
+}
+```
+
+### Entry Point
+
+The assembly entry point is defined in `/kernel/src/proc/syscall_entry.S` and saves user context before dispatching to the C handler.
+
+### Dispatcher
+
+```c
+uint64_t syscall_handler(uint64_t num, uint64_t arg1, 
+                         uint64_t arg2, uint64_t arg3);
+```
+
+The handler performs syscall filtering checks and dispatches to the appropriate implementation based on the syscall number.

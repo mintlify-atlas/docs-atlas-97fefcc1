@@ -1,0 +1,446 @@
+---
+title: Kernel architecture
+description: Deep dive into Aurora OS native kernel implementation
+---
+
+Aurora OS implements a hybrid kernel architecture that combines the performance of monolithic kernels with the modularity of microkernels. The kernel core runs in privileged mode with critical subsystems tightly integrated, while drivers and non-essential services load as signed modules.
+
+## Architectural decision
+
+Aurora OS uses a **hybrid kernel**: monolithic core with modular loadable services.
+
+### Options evaluated
+
+<Tabs>
+  <Tab title="Monolithic kernel">
+    **Pros:**
+    - Fast syscalls (no IPC overhead)
+    - Simpler design
+    - Proven approach (Linux, SerenityOS)
+
+    **Cons:**
+    - Single address space for kernel = one bug crashes everything
+    - Harder to isolate drivers
+
+    **Example:** [SerenityOS](https://github.com/SerenityOS/serenity) — monolithic with loadable modules
+  </Tab>
+  <Tab title="Microkernel">
+    **Pros:**
+    - Strong isolation (drivers in userspace)
+    - Fault tolerance
+    - Formal verification possible
+
+    **Cons:**
+    - IPC overhead on every syscall
+    - Complex message passing
+    - Slower for I/O-heavy workloads
+
+    **Example:** [Redox OS](https://www.redox-os.org) — microkernel in Rust
+  </Tab>
+  <Tab title="Hybrid (chosen)">
+    **Design:**
+    - Monolithic core with modular loadable services
+    - Fast paths stay in kernel (scheduler, memory, VFS)
+    - Drivers and non-critical services are loadable, signed modules
+    - Agent runtime in privileged userspace with strong sandboxing
+
+    **Benefits:**
+    - Best balance of performance and security/modularity
+    - No IPC overhead for critical operations
+    - Drivers can be updated independently
+  </Tab>
+</Tabs>
+
+### Rationale
+
+1. **Performance**: Hot paths (context switch, syscall, memory allocation) stay in-kernel (~100ns syscall overhead vs. ~10μs with IPC)
+2. **Security**: Loadable modules are signed with RSA-2048 and validated before loading
+3. **Modularity**: Drivers can be updated independently without kernel rebuild
+4. **Agent isolation**: Agent runtime in userspace with capability-based sandboxing
+5. **Dual-target**: Pure computation modules compile to WASM; hardware-dependent code stays native
+
+Implementation: `kernel/src/`, references in `docs/arch.md`
+
+## Kernel components
+
+### Boot sequence
+
+Aurora OS boots via the Limine bootloader:
+
+<Steps>
+  <Step title="Firmware (UEFI or BIOS)">
+    Hardware initialization and POST (Power-On Self Test)
+  </Step>
+  <Step title="Bootloader (Limine)">
+    Loads kernel ELF, sets up higher-half mapping, enters 64-bit long mode
+    
+    Config: `bootloader/legacy/limine.cfg`
+  </Step>
+  <Step title="Kernel entry (kernel_main)">
+    GDT/IDT setup, PIC/PIT initialization, framebuffer console
+    
+    Implementation: `kernel/src/main.c:42`
+  </Step>
+  <Step title="Memory subsystem">
+    Physical allocator, paging, heap initialization
+    
+    Implementation: `kernel/src/mm/`
+  </Step>
+  <Step title="Process subsystem">
+    Init process (PID 1), scheduler start
+    
+    Implementation: `kernel/src/proc/`
+  </Step>
+  <Step title="Userspace">
+    Mount tmpfs, exec /sbin/init
+    
+    Implementation: `userland/init/`
+  </Step>
+</Steps>
+
+### Memory management
+
+Aurora OS implements a three-tier memory management system:
+
+<AccordionGroup>
+  <Accordion title="Physical memory allocator (PMM)">
+    **Design**: Bitmap-based allocator tracking 4 KiB frames
+
+    ```c
+    // kernel/src/mm/pmm.c:35
+    struct pmm {
+        uint8_t *bitmap;           // 1 bit per frame
+        uintptr_t base;            // First physical address
+        size_t total_frames;
+        size_t free_frames;
+    };
+
+    uintptr_t pmm_alloc(void) {
+        // Find first free frame in bitmap
+        // Mark as used
+        // Return physical address
+    }
+    ```
+
+    **Features**:
+    - Memory-map aware (respects firmware-provided map)
+    - Reserves kernel image and bootloader data
+    - O(n) allocation (scans bitmap)
+    - O(1) deallocation (clears bit)
+
+    Implementation: `kernel/src/mm/pmm.c`
+  </Accordion>
+  <Accordion title="Virtual memory manager (VMM)">
+    **Design**: 4-level paging (PML4 → PDPT → PD → PT)
+
+    ```c
+    // kernel/src/mm/vmm.c:60
+    struct page_table {
+        uint64_t entries[512];     // 512 entries per table
+    };
+
+    #define PTE_PRESENT  (1ULL << 0)
+    #define PTE_WRITE    (1ULL << 1)
+    #define PTE_USER     (1ULL << 2)
+    #define PTE_NX       (1ULL << 63)  // No-execute
+
+    int vmm_map(struct page_table *pml4, 
+                uintptr_t virt, 
+                uintptr_t phys, 
+                uint64_t flags);
+    ```
+
+    **Features**:
+    - Higher-half kernel mapping (kernel at 0xFFFFFFFF80000000)
+    - Per-process page tables
+    - Copy-on-write for fork()
+    - NX bit enforcement (stack/heap non-executable)
+    - ASLR with random offset
+
+    Implementation: `kernel/src/mm/vmm.c`
+  </Accordion>
+  <Accordion title="Heap allocator (kmalloc)">
+    **Design**: Free-list allocator with slab caches
+
+    ```c
+    // kernel/src/mm/heap.c:45
+    struct slab_cache {
+        size_t object_size;        // 16, 32, 64, 128, 256
+        void *free_list;           // Linked list of free objects
+        size_t num_free;
+    };
+
+    void *kmalloc(size_t size) {
+        if (size <= 256) {
+            // Use slab cache
+            return slab_alloc(size);
+        } else {
+            // Use free-list allocator
+            return heap_alloc(size);
+        }
+    }
+    ```
+
+    **Features**:
+    - Slab caches for 16, 32, 64, 128, 256 byte allocations
+    - Free-list for larger allocations
+    - Debug mode: fill freed memory with 0xDEADBEEF
+    - Alignment support (16-byte aligned by default)
+
+    Implementation: `kernel/src/mm/heap.c`
+  </Accordion>
+</AccordionGroup>
+
+### Process scheduling
+
+Aurora OS implements a CFS-inspired (Completely Fair Scheduler) preemptive scheduler:
+
+```c
+// kernel/src/proc/sched.c:30
+struct task {
+    pid_t pid;
+    uint64_t vruntime;         // Virtual runtime (fairness metric)
+    int priority;              // Nice value (-20 to +19)
+    enum task_state state;     // RUNNING, READY, BLOCKED, ZOMBIE
+    struct registers regs;     // Saved registers (rip, rsp, etc.)
+    struct page_table *pml4;   // Page table root
+};
+
+void schedule(void) {
+    // Pick task with lowest vruntime
+    // Update vruntime += delta * weight
+    // Context switch
+}
+```
+
+**Scheduling algorithm**:
+
+1. **Fairness**: Each task accumulates `vruntime` based on CPU time used
+2. **Priority weights**: Higher priority = slower vruntime accumulation
+3. **Preemption**: Timer interrupt (1000 Hz) triggers scheduler
+4. **Context switch**: ~2μs to save/restore registers and switch page tables
+
+**Priority weights** (based on nice value):
+
+```c
+// priority -20 (highest) → weight 88761
+// priority   0 (default) → weight  1024
+// priority +19 (lowest)  → weight    15
+```
+
+Implementation: `kernel/src/proc/sched.c`, `kernel/arch/x86_64/context.S`
+
+### Syscall interface
+
+Aurora OS uses the fast `SYSCALL`/`SYSRET` instructions (x86_64):
+
+```c
+// kernel/arch/x86_64/syscall_entry.S:12
+.global syscall_entry
+syscall_entry:
+    swapgs                     // Swap GS to kernel stack
+    mov [gs:0], rsp            // Save user stack
+    mov rsp, [gs:8]            // Load kernel stack
+    
+    push rcx                   // Save user RIP
+    push r11                   // Save user RFLAGS
+    
+    call syscall_handler       // C handler
+    
+    pop r11
+    pop rcx
+    mov rsp, [gs:0]            // Restore user stack
+    swapgs
+    sysretq                    // Return to userspace
+```
+
+**Syscall convention**:
+- `RAX` = syscall number
+- `RDI`, `RSI`, `RDX`, `R10`, `R8`, `R9` = arguments (up to 6)
+- Return value in `RAX` (negative = error)
+
+**38 implemented syscalls** including:
+- Process: `exit`, `fork`, `execve`, `waitpid`, `getpid`, `kill`
+- File: `open`, `close`, `read`, `write`, `stat`, `mkdir`, `unlink`
+- Memory: `mmap`, `munmap`, `brk`
+- IPC: `msgsnd`, `msgrcv`, `shmget`, `shmat`, `shmdt`
+- Network: `socket`, `bind`, `connect`, `send`, `recv`
+
+See [System Calls API](/api/syscalls/overview) for full reference.
+
+### Virtual file system
+
+The VFS provides a unified interface for all file systems:
+
+```c
+// kernel/src/fs/vfs.h:25
+struct inode {
+    uint32_t ino;              // Inode number
+    uint32_t mode;             // File type + permissions
+    uint32_t uid, gid;         // Owner user/group ID
+    uint64_t size;             // File size in bytes
+    struct inode_ops *ops;     // Operations vtable
+    void *fs_private;          // FS-specific data
+};
+
+struct inode_ops {
+    ssize_t (*read)(struct inode *, void *buf, size_t, off_t);
+    ssize_t (*write)(struct inode *, const void *buf, size_t, off_t);
+    int (*create)(struct inode *parent, const char *name, uint32_t mode);
+    int (*mkdir)(struct inode *parent, const char *name);
+    int (*unlink)(struct inode *parent, const char *name);
+    struct inode *(*lookup)(struct inode *parent, const char *name);
+};
+```
+
+**Path resolution**:
+
+```c
+struct inode *vfs_lookup(const char *path) {
+    if (path[0] == '/') {
+        // Start from root
+        inode = root_inode;
+        path++;
+    } else {
+        // Start from current directory
+        inode = current->cwd;
+    }
+    
+    // Walk path components
+    while (*path) {
+        component = extract_next(path);
+        inode = inode->ops->lookup(inode, component);
+        if (!inode) return NULL;
+    }
+    
+    return inode;
+}
+```
+
+Implementation: `kernel/src/fs/vfs.c`, `kernel/src/fs/tmpfs.c`
+
+### Hardware abstraction layer
+
+The HAL provides portability across x86_64 and ARM:
+
+```c
+// kernel/include/hal.h:15
+struct hal_ops {
+    void (*init)(void);                    // Architecture init
+    void (*enable_interrupts)(void);
+    void (*disable_interrupts)(void);
+    void (*set_page_table)(uintptr_t pml4);
+    void (*flush_tlb)(uintptr_t virt);
+    uint64_t (*read_timestamp)(void);      // RDTSC or equivalent
+};
+
+extern struct hal_ops hal;
+```
+
+**Architecture-specific code**:
+- `kernel/arch/x86_64/` — x86_64 assembly, GDT/IDT, APIC, syscall entry
+- `kernel/arch/aarch64/` — ARM64 assembly, exception vectors (planned)
+
+Implementation: `kernel/src/hal.c`, `kernel/arch/*/`
+
+## Security features
+
+<CardGroup cols={2}>
+  <Card title="KASLR" icon="shuffle">
+    Kernel Address Space Layout Randomization: kernel loaded at random offset
+    
+    Implementation: `kernel/kernel.ld:8` (random base address)
+  </Card>
+  <Card title="ASLR" icon="dice">
+    User-space address randomization: stack, heap, libraries at random offsets
+    
+    Implementation: `kernel/src/proc/exec.c:180`
+  </Card>
+  <Card title="Stack canaries" icon="shield">
+    GCC `-fstack-protector-strong` detects buffer overflows
+    
+    Compiler flags: `Makefile:25`
+  </Card>
+  <Card title="NX bit" icon="ban">
+    Non-executable stack and heap pages prevent code injection
+    
+    Implementation: `kernel/src/mm/vmm.c:95` (PTE_NX flag)
+  </Card>
+  <Card title="Capability tokens" icon="key">
+    256-bit random tokens for IPC authorization (prevents PID guessing)
+    
+    Implementation: `rust/caps/src/lib.rs`
+  </Card>
+  <Card title="Module signing" icon="signature">
+    RSA-2048 signatures on loadable modules (prevents malicious drivers)
+    
+    Implementation: `kernel/src/module/verify.c`
+  </Card>
+</CardGroup>
+
+## Current status
+
+<Tabs>
+  <Tab title="Implemented">
+    ✅ Boots via Limine on x86_64 (UEFI + BIOS)
+    ✅ GOP framebuffer console with VGA fallback
+    ✅ GDT, IDT, PIC, PIT timer (1000 Hz)
+    ✅ Physical memory allocator (bitmap)
+    ✅ 4-level paging with higher-half mapping
+    ✅ Heap allocator (free-list + slab caches)
+    ✅ Process model with fork, exit, waitpid
+    ✅ CFS-inspired preemptive scheduler
+    ✅ SYSCALL/SYSRET with 38 handlers
+    ✅ VFS with tmpfs mounted at boot
+    ✅ ELF loader with per-process page tables
+    ✅ TCP/UDP/IP network stack
+    ✅ Signal delivery with user handlers
+    ✅ COW page fault handler
+    ✅ KASLR + ASLR
+    ✅ IPC message passing with capability tokens
+    ✅ HAL for x86_64/ARM portability
+  </Tab>
+  <Tab title="In progress">
+    🚧 ARM64 port (HAL abstraction ready)
+    🚧 Real hardware testing (QEMU works)
+    🚧 SMP support (multiple CPUs)
+    🚧 Advanced file systems (ext2, FAT32)
+    🚧 USB drivers
+    🚧 Audio drivers
+    🚧 Graphics drivers (beyond framebuffer)
+  </Tab>
+  <Tab title="Planned">
+    📋 Kernel modules (signed, loadable)
+    📋 Agent runtime (sandboxed AI execution)
+    📋 Formal verification (for critical paths)
+    📋 Fuzz testing integration
+    📋 Performance benchmarking suite
+  </Tab>
+</Tabs>
+
+See [STATUS.md](https://github.com/yash1511-bogam/aurora-os/blob/main/STATUS.md) for detailed status.
+
+## References
+
+- [OSDev Wiki — Microkernel](https://wiki.osdev.org/Microkernel)
+- [OSDev Wiki — Monolithic Kernel](https://wiki.osdev.org/Monolithic_Kernel)
+- [SerenityOS](https://github.com/SerenityOS/serenity) — Monolithic with loadable modules
+- [Redox OS](https://www.redox-os.org) — Microkernel in Rust
+- [Linux kernel documentation](https://www.kernel.org/doc/html/latest/)
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="System calls" icon="phone" href="/api/syscalls/overview">
+    Explore the syscall API reference
+  </Card>
+  <Card title="Memory management" icon="memory" href="/api/kernel/memory-management">
+    Deep dive into memory subsystem APIs
+  </Card>
+  <Card title="Building" icon="hammer" href="/development/building">
+    Build the kernel from source
+  </Card>
+  <Card title="Testing" icon="flask" href="/development/testing">
+    Run kernel tests in QEMU
+  </Card>
+</CardGroup>

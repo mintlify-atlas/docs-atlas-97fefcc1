@@ -1,0 +1,266 @@
+---
+title: "Scheduler API"
+description: "Preemptive CFS-inspired scheduler for Aurora OS kernel"
+---
+
+## Overview
+
+Aurora OS implements a **preemptive scheduler** inspired by Linux's Completely Fair Scheduler (CFS). The scheduler manages process execution using virtual runtime (vruntime) for fair CPU time distribution and priority-based weighting.
+
+<Info>
+The scheduler runs at 1000 Hz (PIT timer) and uses round-robin scheduling within priority classes.
+</Info>
+
+## Architecture
+
+Source: `kernel/src/proc/sched_preempt.c:sched_preempt.c:1-97`
+
+- **Algorithm**: CFS-inspired with vruntime tracking
+- **Timer Frequency**: 1000 Hz (1ms tick)
+- **Context Switch**: Assembly-optimized (`kernel/src/proc/switch.S`)
+- **Priority Levels**: 0-4 (higher = more CPU time)
+- **Base Timeslice**: 10 ticks (10ms)
+
+---
+
+## Core Functions
+
+### sched_init
+
+Initializes the scheduler subsystem.
+
+```c
+void sched_init(void);
+```
+
+<ParamField body="Returns" type="void">
+No return value. Initializes `current_pid` to `-1` (no process running).
+</ParamField>
+
+**Implementation Details**:
+- Sets `current_pid = -1`
+- Must be called during kernel boot before any process is created
+- Reference: `kernel/src/proc/sched_preempt.c:25-27`
+
+---
+
+### sched_tick
+
+Called on every timer interrupt (1000 Hz). Manages timeslice accounting, wakes sleeping processes, and triggers rescheduling.
+
+```c
+void sched_tick(void);
+```
+
+<ParamField body="global_tick" type="uint64_t">
+Incremented on every tick. Used for sleep/wake timing and TCP retransmit timers.
+</ParamField>
+
+**Behavior**:
+1. Increments global tick counter
+2. Wakes processes whose `wake_tick` has elapsed (sleep timeout)
+3. Calls `tcp_timer_tick()` for network stack retransmit timers
+4. Updates current process vruntime based on priority weight
+5. Decrements timeslice and calls `schedule()` when exhausted
+
+**Priority Weights**:
+
+<CodeGroup>
+```c Priority Weighting
+static const uint64_t prio_weights[] = {
+    [0] = 1,   // Lowest priority
+    [1] = 2,
+    [2] = 4,   // Default priority
+    [3] = 8,
+    [4] = 16   // Highest priority
+};
+```
+</CodeGroup>
+
+<Note>
+**vruntime** is incremented by `prio_weights[priority]` each tick. Lower vruntime = higher scheduling priority.
+</Note>
+
+**Source**: `kernel/src/proc/sched_preempt.c:29-51`
+
+---
+
+### schedule
+
+Performs process scheduling and context switching. Selects the process with the lowest vruntime.
+
+```c
+void schedule(void);
+```
+
+**Algorithm**:
+1. Scan all processes with `PROC_READY` state
+2. Select process with **minimum vruntime** (fairness guarantee)
+3. Update previous process state from `PROC_RUNNING` → `PROC_READY`
+4. Set selected process state to `PROC_RUNNING`
+5. Reset timeslice to `TIMESLICE_BASE` (10 ticks)
+6. Update TSS kernel stack pointer (`gdt_set_kernel_stack`)
+7. Deliver pending signals via `signal_deliver()`
+8. Perform context switch if process changed
+
+<CodeGroup>
+```c Scheduling Logic
+for (int i = 0; i < PROC_MAX; i++) {
+    if (procs[i].state == PROC_READY && 
+        procs[i].vruntime < min_vruntime) {
+        min_vruntime = procs[i].vruntime;
+        best = i;
+    }
+}
+```
+</CodeGroup>
+
+**Context Switch**:
+- Saves/restores registers: `rsp`, `rbp`, `rbx`, `r12-r15`, `rip`, `rflags`
+- Switches page tables by loading new `CR3` register
+- Assembly implementation: `kernel/src/proc/switch.S:1-45`
+
+**Source**: `kernel/src/proc/sched_preempt.c:53-96`
+
+---
+
+## Process States
+
+Defined in `kernel/src/proc/process.h:16-22`:
+
+<ResponseField name="PROC_UNUSED" type="enum">
+Process slot is free and can be allocated.
+</ResponseField>
+
+<ResponseField name="PROC_READY" type="enum">
+Process is runnable and waiting to be scheduled.
+</ResponseField>
+
+<ResponseField name="PROC_RUNNING" type="enum">
+Process is currently executing on CPU.
+</ResponseField>
+
+<ResponseField name="PROC_BLOCKED" type="enum">
+Process is waiting for I/O, signal, or child exit (waitpid).
+</ResponseField>
+
+<ResponseField name="PROC_ZOMBIE" type="enum">
+Process has exited but parent hasn't called waitpid yet.
+</ResponseField>
+
+---
+
+## Process Structure
+
+<CodeGroup>
+```c struct process
+struct process {
+    int pid;
+    int ppid;              // Parent PID
+    proc_state_t state;
+    struct context ctx;    // Saved registers
+    uint8_t kernel_stack[8192];
+    void (*entry)(void);
+
+    // Scheduler fields
+    uint64_t vruntime;     // Virtual runtime
+    int priority;          // 0-4 (default: 2)
+    int timeslice;         // Remaining ticks
+
+    uint64_t pml4_phys;    // Page table CR3
+    struct fd_entry fd_table[32];
+    
+    // Signals
+    uint32_t pending_signals;
+    sighandler_t signal_handlers[32];
+    
+    // Sleep support
+    uint64_t wake_tick;    // When to wake from sleep
+};
+```
+</CodeGroup>
+
+**Limits**:
+- `PROC_MAX`: 64 processes
+- `KERNEL_STACK_SIZE`: 8192 bytes per process
+
+**Source**: `kernel/src/proc/process.h:55-91`
+
+---
+
+## Runqueue
+
+Per-CPU runqueue (currently single-CPU).
+
+<CodeGroup>
+```c Runqueue Operations
+struct runqueue {
+    struct prio_queue queue;
+    int current_pid;
+    uint64_t nr_switches;  // Context switch counter
+};
+
+void rq_init(struct runqueue *rq);
+void rq_enqueue(struct runqueue *rq, int pid);
+int  rq_dequeue(struct runqueue *rq);
+```
+</CodeGroup>
+
+**Source**: `kernel/src/proc/runqueue.h:13-22`
+
+---
+
+## Sleep and Wake
+
+<Info>
+Processes can sleep by setting `wake_tick` to a future tick value and transitioning to `PROC_BLOCKED` state.
+</Info>
+
+**Wake Logic** (in `sched_tick`):
+
+```c
+for (int i = 0; i < PROC_MAX; i++) {
+    if (procs[i].state == PROC_BLOCKED && 
+        procs[i].wake_tick > 0 &&
+        procs[i].wake_tick <= global_tick) {
+        procs[i].wake_tick = 0;
+        procs[i].state = PROC_READY;
+    }
+}
+```
+
+**Source**: `kernel/src/proc/sched_preempt.c:32-39`
+
+---
+
+## Performance Characteristics
+
+<CardGroup cols={2}>
+  <Card title="Time Complexity" icon="clock">
+    **Schedule**: O(n) where n = number of processes
+    
+    Scans all processes to find minimum vruntime.
+  </Card>
+  
+  <Card title="Context Switch" icon="arrows-rotate">
+    **Overhead**: ~100 CPU cycles
+    
+    Assembly-optimized register save/restore + CR3 reload.
+  </Card>
+</CardGroup>
+
+---
+
+## Related APIs
+
+- [Process Management](/api/kernel/process) - Process creation, fork, exit, waitpid
+- [Memory Management](/api/kernel/memory-management) - Page tables for per-process address spaces
+- [Signals](/api/kernel/signals) - Signal delivery during context switch
+
+---
+
+## References
+
+- [OSDev Wiki - Scheduling Algorithms](https://wiki.osdev.org/Scheduling_Algorithms)
+- [Linux CFS Documentation](https://docs.kernel.org/scheduler/sched-design-CFS.html)
+- Source: `kernel/src/proc/sched_preempt.c`

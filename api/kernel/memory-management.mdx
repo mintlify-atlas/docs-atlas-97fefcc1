@@ -1,0 +1,544 @@
+---
+title: "Memory Management API"
+description: "Physical memory allocator, paging, heap, and virtual memory for Aurora OS"
+---
+
+## Overview
+
+Aurora OS memory management consists of three layers:
+
+1. **Physical Memory Allocator** - Bitmap-based page frame allocator
+2. **Paging (Virtual Memory)** - 4-level page tables for x86_64
+3. **Kernel Heap** - kmalloc/kfree with slab caches
+
+<Info>
+Aurora uses **4 KiB pages** and supports up to 4 GiB of RAM with the bitmap allocator.
+</Info>
+
+---
+
+## Physical Memory Allocator
+
+Bitmap-based allocator managing 4 KiB page frames. Source: `kernel/src/mm/phys.c`
+
+### Architecture
+
+- **Page Size**: 4096 bytes (4 KiB)
+- **Max Pages**: 1,048,576 (4 GiB total)
+- **Bitmap Size**: 128 KiB (1 bit per page)
+- **Allocation Strategy**: O(1) amortized with free hint
+
+<CodeGroup>
+```c Memory Map Entry
+struct phys_mmap_entry {
+    uint64_t base;      // Physical address
+    uint64_t length;    // Region size in bytes
+    uint64_t type;      // PHYS_MMAP_USABLE, etc.
+};
+```
+</CodeGroup>
+
+### Memory Map Types
+
+<ResponseField name="PHYS_MMAP_USABLE" type="0">
+Usable RAM - available for allocation.
+</ResponseField>
+
+<ResponseField name="PHYS_MMAP_RESERVED" type="1">
+Reserved by firmware/BIOS.
+</ResponseField>
+
+<ResponseField name="PHYS_MMAP_ACPI_RECLAIMABLE" type="2">
+ACPI tables - reclaimable after parsing.
+</ResponseField>
+
+<ResponseField name="PHYS_MMAP_KERNEL_AND_MODULES" type="6">
+Kernel ELF and loaded modules.
+</ResponseField>
+
+<ResponseField name="PHYS_MMAP_FRAMEBUFFER" type="7">
+GOP framebuffer memory.
+</ResponseField>
+
+**Source**: `kernel/src/mm/phys.h:15-23`
+
+---
+
+### phys_init_mmap
+
+Initialize physical memory allocator with memory map from bootloader (Limine/Multiboot2).
+
+```c
+void phys_init_mmap(struct phys_mmap_entry *entries, size_t count);
+```
+
+<ParamField body="entries" type="struct phys_mmap_entry*">
+Array of memory regions from bootloader.
+</ParamField>
+
+<ParamField body="count" type="size_t">
+Number of memory map entries.
+</ParamField>
+
+**Behavior**:
+1. Marks all pages as **allocated** (safe default)
+2. Frees pages in regions with `type == PHYS_MMAP_USABLE`
+3. Reserves first 1 MiB (BIOS/bootloader area)
+4. Page-aligns region boundaries
+
+**Source**: `kernel/src/mm/phys.c:50-87`
+
+---
+
+### phys_alloc
+
+Allocate a single 4 KiB physical page frame.
+
+```c
+void *phys_alloc(void);
+```
+
+<ResponseField name="return" type="void*">
+Physical address of allocated page, or `NULL` if out of memory.
+</ResponseField>
+
+**Algorithm**:
+- Uses **free hint** for O(1) amortized allocation
+- Scans bitmap starting from `next_free_hint`
+- Updates hint after allocation
+
+<CodeGroup>
+```c Allocation Logic
+for (size_t j = 0; j < total_pages; j++) {
+    size_t i = (next_free_hint + j) % total_pages;
+    if (!bitmap_test(i)) {
+        bitmap_set(i);
+        next_free_hint = (i + 1) % total_pages;
+        return (void *)(i * PAGE_SIZE);
+    }
+}
+return NULL;  // Out of memory
+```
+</CodeGroup>
+
+**Source**: `kernel/src/mm/phys.c:89-100`
+
+---
+
+### phys_free
+
+Free a physical page frame.
+
+```c
+void phys_free(void *page);
+```
+
+<ParamField body="page" type="void*">
+Physical address (must be page-aligned).
+</ParamField>
+
+**Behavior**:
+- Clears bitmap bit for the page
+- Updates free hint if freed page is before current hint (optimization)
+
+**Source**: `kernel/src/mm/phys.c:102-109`
+
+---
+
+### phys_reserve_range
+
+Reserve a specific physical address range (for kernel, modules, framebuffer).
+
+```c
+void phys_reserve_range(uint64_t base, uint64_t length);
+```
+
+<ParamField body="base" type="uint64_t">
+Starting physical address.
+</ParamField>
+
+<ParamField body="length" type="uint64_t">
+Size in bytes.
+</ParamField>
+
+**Source**: `kernel/src/mm/phys.c:119-127`
+
+---
+
+## Virtual Memory (Paging)
+
+4-level page tables for x86_64 with higher-half kernel mapping. Source: `kernel/src/mm/paging.c`
+
+### Architecture
+
+- **Levels**: PML4 → PDPT → PD → PT → Page (4 levels)
+- **Kernel Virtual Address**: `0xFFFFFFFF80000000` (higher-half)
+- **Identity Map**: First 2 MiB for boot transition
+- **Page Size**: 4 KiB (also supports 2 MiB large pages)
+
+<Note>
+Aurora uses **higher-half kernel** design: kernel mapped at high virtual addresses, user space at low addresses.
+</Note>
+
+### Page Table Entry Flags
+
+<CodeGroup>
+```c Page Flags
+#define PAGE_PRESENT  (1ULL << 0)  // Page is present in memory
+#define PAGE_WRITABLE (1ULL << 1)  // Page is writable
+#define PAGE_USER     (1ULL << 2)  // User-mode accessible
+#define PAGE_NX       (1ULL << 63) // No-execute (requires EFER.NXE)
+#define PAGE_COW      (1ULL << 9)  // Copy-on-write (software flag)
+```
+</CodeGroup>
+
+**Source**: `kernel/src/mm/paging.h:12-16`
+
+---
+
+### paging_init
+
+Initialize kernel page tables with higher-half mapping.
+
+```c
+void paging_init(void);
+```
+
+**Behavior**:
+1. Allocates new PML4 table
+2. Identity maps first 2 MiB (for boot): `0x0 → 0x0`
+3. Higher-half maps first 2 MiB: `0xFFFFFFFF80000000 → 0x0`
+4. Uses 2 MiB large pages for efficiency
+5. Loads new page table into CR3
+
+**Source**: `kernel/src/mm/paging.c:92-116`
+
+---
+
+### paging_map
+
+Map a virtual page to a physical page in the current address space.
+
+```c
+void paging_map(uint64_t virt, uint64_t phys, uint64_t flags);
+```
+
+<ParamField body="virt" type="uint64_t">
+Virtual address (page-aligned).
+</ParamField>
+
+<ParamField body="phys" type="uint64_t">
+Physical address (page-aligned).
+</ParamField>
+
+<ParamField body="flags" type="uint64_t">
+Combination of `PAGE_*` flags.
+</ParamField>
+
+**Behavior**:
+1. Walks 4-level page table hierarchy
+2. Allocates missing intermediate tables on-demand
+3. Sets final page table entry: `pt[idx] = phys | flags | PAGE_PRESENT`
+4. Invalidates TLB entry with `invlpg`
+
+**Source**: `kernel/src/mm/paging.c:118-138`
+
+---
+
+### paging_unmap
+
+Unmap a virtual page.
+
+```c
+void paging_unmap(uint64_t virt);
+```
+
+<ParamField body="virt" type="uint64_t">
+Virtual address to unmap.
+</ParamField>
+
+**Behavior**:
+- Clears page table entry
+- Flushes TLB with `invlpg`
+- Does **not** free physical page (caller must call `phys_free`)
+
+**Source**: `kernel/src/mm/paging.c:140-155`
+
+---
+
+### paging_clone_kernel
+
+Create a new page table for a process by cloning kernel mappings.
+
+```c
+uint64_t paging_clone_kernel(void);
+```
+
+<ResponseField name="return" type="uint64_t">
+Physical address of new PML4 table, or `0` on failure.
+</ResponseField>
+
+**Behavior**:
+- Allocates new PML4 table
+- Copies kernel half (PML4 entries 256–511) by reference
+- Leaves user half (entries 0–255) empty
+- Used by `proc_create()`
+
+**Source**: `kernel/src/mm/paging.c:161-175`
+
+---
+
+### paging_clone_address_space
+
+Fork a complete address space (for `fork()` syscall).
+
+```c
+uint64_t paging_clone_address_space(uint64_t src_pml4_phys);
+```
+
+<ParamField body="src_pml4_phys" type="uint64_t">
+Physical address of source PML4 (parent process).
+</ParamField>
+
+<ResponseField name="return" type="uint64_t">
+Physical address of cloned PML4, or `0` on failure.
+</ResponseField>
+
+**Behavior**:
+1. Clones kernel half (entries 256–511) by reference
+2. Deep-copies user half (entries 0–255):
+   - Allocates new physical pages
+   - Copies page contents with `page_copy_4k()`
+3. Preserves page flags (writable, user, NX, COW)
+
+<Note>
+Copy-on-Write (COW) optimization planned but not yet implemented. Current fork does eager copy.
+</Note>
+
+**Source**: `kernel/src/mm/paging.c:177-198`
+
+---
+
+### paging_map_in
+
+Map a page in a **specific** PML4 (not current). Used for loading ELF into new process.
+
+```c
+void paging_map_in(uint64_t pml4_phys, uint64_t virt, 
+                   uint64_t phys, uint64_t flags);
+```
+
+<ParamField body="pml4_phys" type="uint64_t">
+Target PML4 physical address.
+</ParamField>
+
+<ParamField body="virt" type="uint64_t">
+Virtual address to map.
+</ParamField>
+
+<ParamField body="phys" type="uint64_t">
+Physical address.
+</ParamField>
+
+<ParamField body="flags" type="uint64_t">
+Page flags.
+</ParamField>
+
+**Source**: `kernel/src/mm/paging.c:200-221`
+
+---
+
+### paging_virt_to_phys
+
+Translate virtual address to physical address.
+
+```c
+uint64_t paging_virt_to_phys(uint64_t virt);
+```
+
+<ResponseField name="return" type="uint64_t">
+Physical address, or `0` if not mapped.
+</ResponseField>
+
+**Behavior**:
+- Walks page table hierarchy
+- Handles 2 MiB large pages
+- Returns 0 if any level is not present
+
+**Source**: `kernel/src/mm/paging.c:227-242`
+
+---
+
+## Kernel Heap (kmalloc)
+
+Dynamic memory allocator for kernel with slab caches for small objects. Source: `kernel/src/mm/heap.c`
+
+### Architecture
+
+- **Small Allocations** (≤2048 bytes): Slab caches
+- **Large Allocations**: Free-list heap with coalescing
+- **Alignment**: 16-byte aligned
+- **Thread Safety**: Spinlock protected
+
+<CodeGroup>
+```c Slab Cache Sizes
+static const size_t slab_sizes[] = {
+    16, 32, 64, 128, 256, 512, 1024, 2048
+};
+```
+</CodeGroup>
+
+---
+
+### heap_init
+
+Initialize kernel heap allocator.
+
+```c
+void heap_init(uint64_t start, size_t size);
+```
+
+<ParamField body="start" type="uint64_t">
+Starting virtual address of heap region.
+</ParamField>
+
+<ParamField body="size" type="size_t">
+Total heap size in bytes.
+</ParamField>
+
+**Behavior**:
+- Initializes free-list with single large block
+- Creates 8 slab caches for sizes 16–2048 bytes
+- Each slab cache has 32 KiB backing memory
+
+**Source**: `kernel/src/mm/heap.c:40-50`
+
+---
+
+### kmalloc
+
+Allocate kernel memory.
+
+```c
+void *kmalloc(size_t size);
+```
+
+<ParamField body="size" type="size_t">
+Number of bytes to allocate.
+</ParamField>
+
+<ResponseField name="return" type="void*">
+Pointer to allocated memory, or `NULL` if out of memory.
+</ResponseField>
+
+**Algorithm**:
+1. Round size up to 16-byte boundary
+2. Try slab cache if size ≤ 2048
+3. Fall back to free-list heap
+4. Splits blocks if remaining space > 16 bytes
+5. Thread-safe with spinlock
+
+**Source**: `kernel/src/mm/heap.c:52-87`
+
+---
+
+### kfree
+
+Free kernel memory.
+
+```c
+void kfree(void *ptr);
+```
+
+<ParamField body="ptr" type="void*">
+Pointer returned by `kmalloc()`.
+</ParamField>
+
+**Behavior**:
+- Automatically detects slab vs. free-list allocation
+- Coalesces adjacent free blocks
+- Thread-safe with spinlock
+
+**Source**: `kernel/src/mm/heap.c:89-120`
+
+---
+
+## Memory Layout
+
+<CodeGroup>
+```text x86_64 Virtual Address Space
+0x0000000000000000  ┌─────────────────────┐
+                    │   User Space        │  (0–256 PML4 entries)
+                    │   (per-process)     │
+0x0000800000000000  ├─────────────────────┤
+                    │   Canonical Hole    │
+0xFFFF800000000000  ├─────────────────────┤
+                    │   Kernel Space      │  (256–511 PML4 entries)
+0xFFFFFFFF80000000  │   Higher-Half       │  ← Kernel code/data
+                    │                     │
+0xFFFFFFFFFFFFFFFF  └─────────────────────┘
+```
+</CodeGroup>
+
+---
+
+## Performance Characteristics
+
+<CardGroup cols={2}>
+  <Card title="Physical Allocation" icon="microchip">
+    **Time**: O(1) amortized
+    
+    Free hint avoids full bitmap scan.
+  </Card>
+  
+  <Card title="Page Mapping" icon="map">
+    **Time**: O(1)
+    
+    4-level lookup, allocates missing tables.
+  </Card>
+  
+  <Card title="kmalloc (small)" icon="memory">
+    **Time**: O(1)
+    
+    Slab allocator for ≤2048 bytes.
+  </Card>
+  
+  <Card title="kmalloc (large)" icon="boxes-stacked">
+    **Time**: O(n)
+    
+    Free-list scan, n = number of blocks.
+  </Card>
+</CardGroup>
+
+---
+
+## Security Features
+
+<Info>
+- **KASLR**: Kernel Address Space Layout Randomization
+- **ASLR**: User-space address randomization (per-process `mmap_next`)
+- **NX Pages**: No-execute protection via `PAGE_NX` flag
+- **COW**: Copy-on-write for fork (software flag defined)
+</Info>
+
+**References**:
+- ASLR: `kernel/src/proc/process.c:72-74`
+- KASLR: `STATUS.md:20`
+
+---
+
+## Related APIs
+
+- [Scheduler](/api/kernel/scheduler) - Uses page tables for context switch
+- [VFS](/api/kernel/vfs) - Uses kmalloc for file descriptors
+- [Process Management](/api/kernel/process) - Uses `paging_clone_*` for fork
+
+---
+
+## References
+
+- [OSDev Wiki - Paging](https://wiki.osdev.org/Paging)
+- [OSDev Wiki - Page Frame Allocation](https://wiki.osdev.org/Page_Frame_Allocation)
+- [Intel SDM Vol 3 - Chapter 4 (Paging)](https://www.intel.com/sdm)
+- [os.phil-opp.com - Paging](https://os.phil-opp.com/paging-introduction/)
+- Source: `kernel/src/mm/`

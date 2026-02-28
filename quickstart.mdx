@@ -1,80 +1,340 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start
+description: Get Aurora OS running in under 60 seconds
 ---
 
-## Get started in three steps
+# Quick Start Guide
 
-Get your documentation site running locally and make your first customization.
+Get Aurora OS running instantly in your browser or build a native bootable ISO for real hardware.
 
-### Step 1: Set up your local environment
+## Browser Runtime (Instant)
+
+The fastest way to experience Aurora OS — no installation required.
+
+<Steps>
+  <Step title="Open the Runtime">
+    Open `wasm-runtime/pwa/index.html` in any modern browser:
+    
+    ```bash
+    cd wasm-runtime/pwa
+    python3 -m http.server 8000
+    # Open http://localhost:8000 in your browser
+    ```
+    
+    Or simply open the file directly:
+    ```bash
+    open wasm-runtime/pwa/index.html  # macOS
+    xdg-open wasm-runtime/pwa/index.html  # Linux
+    start wasm-runtime/pwa/index.html  # Windows
+    ```
+  </Step>
+
+  <Step title="Watch the Boot Sequence">
+    You'll see a real boot sequence:
+    
+    1. **BIOS POST** — Hardware initialization
+    2. **Bootloader** — Loading kernel into memory
+    3. **Kernel Init** — Subsystem initialization:
+       - GDT, IDT, PIC setup
+       - Physical memory allocator
+       - Paging and heap
+       - VFS and tmpfs mount
+       - Process scheduler
+    4. **Login Screen** — User authentication
+    
+    <Info>
+      The BPE/U (Browser Processing Engine/Unit) emulates a complete virtual CPU, giving you a genuine OS experience.
+    </Info>
+  </Step>
+
+  <Step title="Create Your Account">
+    First-time users see the OOBE (Out-of-Box Experience):
+    
+    - Choose a username (2-16 characters)
+    - Set a password (8+ characters)
+    - Accounts persist using **OPFS** (Origin Private File System) + **WebCrypto**
+    
+    <Warning>
+      Your data is stored locally in your browser. Clearing browser data will require creating a new account.
+    </Warning>
+  </Step>
+
+  <Step title="Enhance Your Experience">
+    For the best experience:
+    
+    - Press **F11** for fullscreen mode
+    - Press **Shift + ?** to see all keyboard shortcuts
+    - Explore apps from the dock or press the **▲ AURORA** button
+  </Step>
+</Steps>
+
+### Keyboard Shortcuts
+
+Master these essentials for efficient navigation:
 
 <AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
+  <Accordion title="Window Management" icon="window-restore">
+    | Shortcut | Action |
+    |----------|--------|
+    | `Super + T` | Open Terminal |
+    | `Super + F` | Open Files |
+    | `Super + B` | Open Browser |
+    | `Ctrl + Q` | Close active window |
+    | `Alt + Tab` | Switch between windows |
+    | `Super + D` | Show Desktop (minimize all) |
   </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
+
+  <Accordion title="Workspaces" icon="grip">
+    | Shortcut | Action |
+    |----------|--------|
+    | `Super + 1` | Switch to Workspace 1 |
+    | `Super + 2` | Switch to Workspace 2 |
+    | `Super + 3` | Switch to Workspace 3 |
+    | `Super + 4` | Switch to Workspace 4 |
+  </Accordion>
+
+  <Accordion title="System" icon="gear">
+    | Shortcut | Action |
+    |----------|--------|
+    | `Super + L` | Lock screen |
+    | `Ctrl + /` | Show keyboard shortcuts |
+    | `F11` | Toggle fullscreen |
+    | `Ctrl + Alt + T` | Open new terminal |
   </Accordion>
 </AccordionGroup>
 
-### Step 2: Deploy your changes
+<Tip>
+  **Super** key is `Cmd` on macOS or `Win` on Windows/Linux.
+</Tip>
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+---
+
+## Native Build
+
+Build a bootable ISO that runs on real x86_64 or ARM hardware.
+
+<Steps>
+  <Step title="Install Dependencies">
+    You'll need a cross-compiler toolchain:
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    <CodeGroup>
+    ```bash Ubuntu/Debian
+    sudo apt update
+    sudo apt install -y build-essential nasm xorriso qemu-system-x86 \
+      mtools grub-pc-bin grub-efi-amd64-bin
+    
+    # Install cross-compiler
+    sudo apt install -y gcc-x86-64-elf binutils-x86-64-elf
+    ```
+    
+    ```bash macOS
+    brew install nasm xorriso qemu
+    brew tap nativeos/i386-elf-toolchain
+    brew install x86_64-elf-gcc x86_64-elf-binutils
+    ```
+    
+    ```bash Arch Linux
+    sudo pacman -S base-devel nasm xorriso qemu-full mtools
+    yay -S x86_64-elf-gcc x86_64-elf-binutils
+    ```
+    </CodeGroup>
+    
+    <Note>
+      See [docs/dev-setup.md](https://github.com/yash1511-bogam/aurora-os/blob/main/docs/dev-setup.md) for detailed toolchain setup.
+    </Note>
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Install Rust Toolchain">
+    Aurora uses Rust for capability management:
+    
+    ```bash
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    rustup target add x86_64-unknown-none
+    ```
+  </Step>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+  <Step title="Build the Kernel">
+    ```bash
+    make build
+    ```
+    
+    This compiles:
+    - **C sources** from `kernel/src/` (VFS, scheduler, memory, networking)
+    - **Assembly** from `kernel/arch/` (GDT, IDT, syscall entry)
+    - **Rust crate** `aurora-caps` for capability tokens
+    - Links everything into `dist/aurora-kernel.elf`
+    
+    Expected output:
+    ```
+    [RUST] Building aurora-caps...
+    [RUST] done → rust/caps/target/x86_64-unknown-none/release/libaurora_caps.a
+    
+    AURORA OS kernel built → dist/aurora-kernel.elf
+    ```
+  </Step>
 
-### Step 3: Go live
+  <Step title="Create Bootable ISO">
+    ```bash
+    make iso
+    ```
+    
+    This:
+    1. Creates ISO filesystem structure in `dist/iso/`
+    2. Copies kernel ELF to `dist/iso/boot/`
+    3. Adds Limine bootloader config
+    4. Generates `dist/aurora-os.iso` with `xorriso`
+    
+    <Info>
+      Aurora uses the [Limine bootloader](https://github.com/limine-bootloader/limine) for UEFI and legacy BIOS support.
+    </Info>
+  </Step>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+  <Step title="Boot in QEMU">
+    Test your build in a virtual machine:
+    
+    ```bash
+    make run
+    ```
+    
+    QEMU options used:
+    - `-cdrom dist/aurora-os.iso` — Boot from ISO
+    - `-m 128M` — 128MB RAM
+    - `-serial stdio` — Kernel logs to terminal
+    - `-display sdl` — Graphical output
+    - `-no-reboot` — Halt on panic
+    
+    You should see:
+    ```
+    [Limine] Loading kernel...
+    AURORA OS v0.1.0
+    [ OK ] GDT, IDT, PIC
+    [ OK ] Physical memory (128 MB)
+    [ OK ] Paging (4-level)
+    [ OK ] Heap allocator
+    [ OK ] VFS + tmpfs
+    [ OK ] Process scheduler
+    [ OK ] Init process (PID 1)
+    init: AURORA OS fully operational
+    ```
+  </Step>
+</Steps>
 
-## Next steps
+### Build Targets
 
-Now that you have your docs running, explore these key features:
+Available Makefile targets:
+
+<ResponseField name="make build" type="Target">
+  Compile kernel ELF binary
+</ResponseField>
+
+<ResponseField name="make iso" type="Target">
+  Create bootable ISO image
+</ResponseField>
+
+<ResponseField name="make run" type="Target">
+  Boot in QEMU with graphical output
+</ResponseField>
+
+<ResponseField name="make run-ci" type="Target">
+  Headless boot for CI/CD pipelines
+</ResponseField>
+
+<ResponseField name="make test" type="Target">
+  Run unit tests and QEMU boot validation
+</ResponseField>
+
+<ResponseField name="make wasm" type="Target">
+  Build WebAssembly kernel bridge with Emscripten
+</ResponseField>
+
+<ResponseField name="make clean" type="Target">
+  Remove all build artifacts
+</ResponseField>
+
+---
+
+## Testing Your Build
+
+<Tabs>
+  <Tab title="Unit Tests">
+    ```bash
+    make test
+    ```
+    
+    Runs:
+    - Unit tests for kernel subsystems
+    - ELF structure validation
+    - QEMU boot test (headless)
+    
+    All tests must pass before deploying.
+  </Tab>
+  
+  <Tab title="Real Hardware">
+    Write the ISO to a USB drive:
+    
+    ```bash Linux
+    sudo dd if=dist/aurora-os.iso of=/dev/sdX bs=4M status=progress
+    sudo sync
+    ```
+    
+    ```bash macOS
+    diskutil list  # Find your USB device
+    diskutil unmountDisk /dev/diskN
+    sudo dd if=dist/aurora-os.iso of=/dev/rdiskN bs=4m
+    ```
+    
+    <Warning>
+      Replace `/dev/sdX` or `/dev/diskN` with your actual USB device. **This will erase all data on the drive!**
+    </Warning>
+    
+    Boot from USB:
+    1. Insert USB into target machine
+    2. Enter BIOS/UEFI boot menu (usually F12, F2, or Del)
+    3. Select USB drive
+    4. Aurora should boot to login screen
+  </Tab>
+  
+  <Tab title="WASM Runtime">
+    Build the browser runtime kernel bridge:
+    
+    ```bash
+    make wasm
+    ```
+    
+    This compiles `wasm-runtime/bridge/kernel-wasm.c` to WebAssembly:
+    
+    ```
+    [WASM] Compiling kernel bridge...
+    [WASM] done → wasm-runtime/pwa/kernel.js + kernel.wasm
+    ```
+    
+    The WASM module exports:
+    - `sys_write(fd, buf, len)` — Write to file descriptor
+    - `sys_open(path, flags)` — Open file
+    - `sys_read(fd, buf, len)` — Read from file descriptor
+    - And 35 more syscalls matching the native kernel
+  </Tab>
+</Tabs>
+
+---
+
+## What's Next?
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Explore Features" icon="compass" href="/features">
+    Learn about the BPE/U engine, agentic runtime, and UI/UX polish
+  </Card>
+  <Card title="Read Architecture" icon="building" href="/architecture">
+    Understand kernel design decisions and subsystems
+  </Card>
+  <Card title="API Documentation" icon="book" href="/api">
+    Browse syscalls, IPC, and development guides
+  </Card>
+  <Card title="Contributing" icon="code-branch" href="/contributing">
+    Join the community and submit your first PR
+  </Card>
 </CardGroup>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  Having issues? Check [docs/browser-limitations.md](https://github.com/yash1511-bogam/aurora-os/blob/main/docs/browser-limitations.md) for browser-specific quirks.
 </Note>
